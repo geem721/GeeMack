@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 
 const LANGUAGES = [
   { code: "en", label: "English", flag: "🇺🇸" },
@@ -15,6 +15,15 @@ const LANGUAGES = [
   { code: "it", label: "Italian", flag: "🇮🇹" },
 ];
 
+const API_KEY = "ANTHROPIC_API_KEY";
+
+const HEADERS = {
+  "Content-Type": "application/json",
+  "x-api-key": API_KEY,
+  "anthropic-version": "2023-06-01",
+  "anthropic-dangerous-direct-browser-access": "true",
+};
+
 export default function App() {
   const [inputText, setInputText] = useState("");
   const [translatedText, setTranslatedText] = useState("");
@@ -29,6 +38,7 @@ export default function App() {
   const [captions, setCaptions] = useState([]);
   const recognitionRef = useRef(null);
   const chatEndRef = useRef(null);
+  const debounceRef = useRef(null);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -41,13 +51,16 @@ export default function App() {
     setTranslatedText(inputText);
   };
 
-  const translateText = async (text, src, tgt) => {
-    if (!text.trim()) return;
+  const translateText = useCallback(async (text, src, tgt) => {
+    if (!text.trim()) {
+      setTranslatedText("");
+      return;
+    }
     setIsTranslating(true);
     try {
       const response = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: HEADERS,
         body: JSON.stringify({
           model: "claude-sonnet-4-20250514",
           max_tokens: 1000,
@@ -68,6 +81,20 @@ export default function App() {
       setTranslatedText("Translation error. Please try again.");
     }
     setIsTranslating(false);
+  }, []);
+
+  // Live translation: fires 600ms after user stops typing
+  const handleInputChange = (e) => {
+    const text = e.target.value;
+    setInputText(text);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (text.trim()) {
+      debounceRef.current = setTimeout(() => {
+        translateText(text, sourceLang, targetLang);
+      }, 600);
+    } else {
+      setTranslatedText("");
+    }
   };
 
   const startVoice = () => {
@@ -101,7 +128,7 @@ export default function App() {
     try {
       const response = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: HEADERS,
         body: JSON.stringify({
           model: "claude-sonnet-4-20250514",
           max_tokens: 1000,
@@ -149,16 +176,27 @@ export default function App() {
       <div style={s.panel}>
         {activeTab === "text" && (
           <>
+            <div style={s.liveIndicator}>
+              {isTranslating
+                ? <span style={{color:"#00d4ff"}}>⟳ Translating...</span>
+                : inputText.trim()
+                  ? <span style={{color:"#00aa66"}}>✓ Live translation active</span>
+                  : <span style={{color:"#2a4a6a"}}>Start typing for live translation</span>}
+            </div>
             <div style={s.textRow}>
               <div style={s.textBox}>
                 <label style={s.boxLabel}>{LANGUAGES.find(l=>l.code===sourceLang)?.flag} Source</label>
-                <textarea style={s.textarea} placeholder="Type to translate..." value={inputText}
-                  onChange={e => setInputText(e.target.value)}
-                  onKeyDown={e => e.key==="Enter"&&!e.shiftKey&&(e.preventDefault(),translateText(inputText,sourceLang,targetLang))} />
+                <textarea
+                  style={s.textarea}
+                  placeholder="Type to translate instantly..."
+                  value={inputText}
+                  onChange={handleInputChange}
+                  onKeyDown={e => e.key==="Enter"&&!e.shiftKey&&(e.preventDefault(),translateText(inputText,sourceLang,targetLang))}
+                />
                 <div style={s.actions}>
                   <button style={s.iconBtn} onClick={()=>speakText(inputText,sourceLang)}>🔊</button>
                   <button style={s.iconBtn} onClick={()=>navigator.clipboard.writeText(inputText)}>📋</button>
-                  <button style={s.iconBtn} onClick={()=>setInputText("")}>✕</button>
+                  <button style={s.iconBtn} onClick={()=>{setInputText("");setTranslatedText("");}}>✕</button>
                 </div>
               </div>
               <div style={s.textBox}>
@@ -258,6 +296,7 @@ const styles = {
   select:{flex:1,padding:"9px 10px",borderRadius:10,border:"1px solid #1e3a5f",background:"#0d1b2a",color:"#e8f4fd",fontSize:13},
   swapBtn:{padding:"9px 14px",borderRadius:10,border:"1px solid #00d4ff44",background:"#00d4ff11",color:"#00d4ff",cursor:"pointer",fontSize:16,fontWeight:700},
   panel:{width:"100%",maxWidth:700,padding:"0 16px 20px",boxSizing:"border-box",flex:1},
+  liveIndicator:{fontSize:12,padding:"6px 0 10px",textAlign:"center"},
   textRow:{display:"flex",gap:10,marginBottom:10,flexWrap:"wrap"},
   textBox:{flex:1,minWidth:180,display:"flex",flexDirection:"column",gap:5},
   boxLabel:{fontSize:11,color:"#6ba3be",fontWeight:600,textTransform:"uppercase",letterSpacing:"0.5px"},
@@ -282,4 +321,4 @@ const styles = {
   bubble:{maxWidth:"80%",padding:"9px 13px",borderRadius:12,fontSize:13,lineHeight:1.5,background:"#0d1b2a",border:"1px solid #1e3a5f",whiteSpace:"pre-wrap"},
   chatRow:{display:"flex",gap:8},
   chatInput:{flex:1,padding:"11px",borderRadius:9,border:"1px solid #1e3a5f",background:"#060f1a",color:"#e8f4fd",fontSize:13,outline:"none",fontFamily:"inherit"},
-}; 
+};
