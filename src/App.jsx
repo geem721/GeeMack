@@ -15,15 +15,6 @@ const LANGUAGES = [
   { code: "it", label: "Italian", flag: "🇮🇹" },
 ];
 
-const API_KEY = "ANTHROPIC_API_KEY";
-
-const HEADERS = {
-  "Content-Type": "application/json",
-  "x-api-key": API_KEY,
-  "anthropic-version": "2023-06-01",
-  "anthropic-dangerous-direct-browser-access": "true",
-};
-
 export default function App() {
   const [inputText, setInputText] = useState("");
   const [translatedText, setTranslatedText] = useState("");
@@ -58,9 +49,9 @@ export default function App() {
     }
     setIsTranslating(true);
     try {
-      const response = await fetch("https://api.anthropic.com/v1/messages", {
+      const response = await fetch("/api/translate", {
         method: "POST",
-        headers: HEADERS,
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model: "claude-sonnet-4-20250514",
           max_tokens: 1000,
@@ -83,7 +74,6 @@ export default function App() {
     setIsTranslating(false);
   }, []);
 
-  // Live translation: fires 600ms after user stops typing
   const handleInputChange = (e) => {
     const text = e.target.value;
     setInputText(text);
@@ -126,9 +116,9 @@ export default function App() {
     setChatInput("");
     setIsChatLoading(true);
     try {
-      const response = await fetch("https://api.anthropic.com/v1/messages", {
+      const response = await fetch("/api/translate", {
         method: "POST",
-        headers: HEADERS,
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model: "claude-sonnet-4-20250514",
           max_tokens: 1000,
@@ -229,8 +219,8 @@ export default function App() {
             <p style={{color:"#6ba3be"}}>{isListening?"Listening... speak now":"Tap to speak"}</p>
             {inputText && (
               <div style={s.voiceResult}>
-                <p style={{color:"#e8f4fd",margin:"0 0 8px"}}>🗣️ "{inputText}"</p>
-                {translatedText && <p style={{color:"#00d4ff",margin:"0 0 12px"}}>🌐 "{translatedText}"</p>}
+                <p style={{margin:"0 0 8px",color:"#e8f4fd"}}>🗣️ "{inputText}"</p>
+                {translatedText && <p style={{margin:"0 0 12px",color:"#00d4ff"}}>🌐 "{translatedText}"</p>}
                 {translatedText && <button style={s.speakBtn} onClick={()=>speakText(translatedText,targetLang)}>🔊 Play Translation</button>}
               </div>
             )}
