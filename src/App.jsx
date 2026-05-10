@@ -13,6 +13,20 @@ const LANGUAGES = [
   { code: "hi", label: "Hindi", flag: "🇮🇳" },
   { code: "ko", label: "Korean", flag: "🇰🇷" },
   { code: "it", label: "Italian", flag: "🇮🇹" },
+  { code: "nl", label: "Dutch", flag: "🇳🇱" },
+  { code: "sv", label: "Swedish", flag: "🇸🇪" },
+  { code: "pl", label: "Polish", flag: "🇵🇱" },
+  { code: "tr", label: "Turkish", flag: "🇹🇷" },
+  { code: "el", label: "Greek", flag: "🇬🇷" },
+  { code: "vi", label: "Vietnamese", flag: "🇻🇳" },
+  { code: "th", label: "Thai", flag: "🇹🇭" },
+  { code: "id", label: "Indonesian", flag: "🇮🇩" },
+  { code: "cs", label: "Czech", flag: "🇨🇿" },
+  { code: "uk", label: "Ukrainian", flag: "🇺🇦" },
+  { code: "he", label: "Hebrew", flag: "🇮🇱" },
+  { code: "ur", label: "Urdu", flag: "🇵🇰" },
+  { code: "ro", label: "Romanian", flag: "🇷🇴" },
+  { code: "hu", label: "Hungarian", flag: "🇭🇺" },
 ];
 
 export default function App() {
@@ -104,6 +118,13 @@ export default function App() {
   };
 
   const speakText = (text, lang) => {
+    if (!text.trim()) return;
+    const voices = window.speechSynthesis.getVoices();
+    const hasVoice = voices.some(v => v.lang.startsWith(lang));
+    if (!hasVoice && voices.length > 0) {
+      alert("Voice playback is not available for this language on your device or browser.");
+      return;
+    }
     const u = new SpeechSynthesisUtterance(text);
     u.lang = lang;
     window.speechSynthesis.speak(u);
