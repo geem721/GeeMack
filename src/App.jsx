@@ -175,11 +175,19 @@ export default function App() {
       </div>
 
       <div style={s.langBar}>
-        <select style={s.select} value={sourceLang} onChange={e => setSourceLang(e.target.value)}>
+        <select style={s.select} value={sourceLang} onChange={e => {
+          const newSrc = e.target.value;
+          setSourceLang(newSrc);
+          if (inputText.trim()) translateText(inputText, newSrc, targetLang);
+        }}>
           {LANGUAGES.map(l => <option key={l.code} value={l.code}>{l.flag} {l.label}</option>)}
         </select>
         <button style={s.swapBtn} onClick={swapLanguages}>⇄</button>
-        <select style={s.select} value={targetLang} onChange={e => setTargetLang(e.target.value)}>
+        <select style={s.select} value={targetLang} onChange={e => {
+          const newTgt = e.target.value;
+          setTargetLang(newTgt);
+          if (inputText.trim()) translateText(inputText, sourceLang, newTgt);
+        }}>
           {LANGUAGES.map(l => <option key={l.code} value={l.code}>{l.flag} {l.label}</option>)}
         </select>
       </div>
