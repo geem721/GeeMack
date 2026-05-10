@@ -41,9 +41,13 @@ export default function App() {
   const [chatInput, setChatInput] = useState("");
   const [isChatLoading, setIsChatLoading] = useState(false);
   const [captions, setCaptions] = useState([]);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordings, setRecordings] = useState([]);
   const recognitionRef = useRef(null);
   const chatEndRef = useRef(null);
   const debounceRef = useRef(null);
+  const mediaRecorderRef = useRef(null);
+  const recordingChunksRef = useRef([]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -130,6 +134,41 @@ export default function App() {
     window.speechSynthesis.speak(u);
   };
 
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream);
+      recordingChunksRef.current = [];
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) recordingChunksRef.current.push(e.data);
+      };
+      mediaRecorder.onstop = () => {
+        const blob = new Blob(recordingChunksRef.current, { type: "audio/webm" });
+        const url = URL.createObjectURL(blob);
+        const timestamp = new Date().toLocaleString().replace(/[/,:]/g, "-").replace(/ /g, "_");
+        setRecordings(prev => [...prev, { url, name: `TalkBridge_${timestamp}.webm`, blob }]);
+        stream.getTracks().forEach(t => t.stop());
+      };
+      mediaRecorder.start();
+      mediaRecorderRef.current = mediaRecorder;
+      setIsRecording(true);
+    } catch {
+      alert("Microphone access denied. Please allow microphone access to record.");
+    }
+  };
+
+  const stopRecording = () => {
+    mediaRecorderRef.current?.stop();
+    setIsRecording(false);
+  };
+
+  const downloadRecording = (recording) => {
+    const a = document.createElement("a");
+    a.href = recording.url;
+    a.download = recording.name;
+    a.click();
+  };
+
   const sendChatMessage = async () => {
     if (!chatInput.trim()) return;
     const userMsg = { role: "user", text: chatInput };
@@ -166,7 +205,7 @@ export default function App() {
       </header>
 
       <div style={s.tabs}>
-        {[["text","📝 Text"],["voice","🎙️ Voice"],["chat","💬 Chat"],["captions","📺 Captions"]].map(([tab,label]) => (
+        {[["text","📝 Text"],["voice","🎙️ Voice"],["chat","💬 Chat"],["captions","📺 Captions"],["record","⏺ Record"]].map(([tab,label]) => (
           <button key={tab} onClick={() => setActiveTab(tab)}
             style={{...s.tab, ...(activeTab===tab ? s.tabActive : {})}}>
             {label}
@@ -291,6 +330,41 @@ export default function App() {
             </div>
             <button style={{...s.mainBtn,background:"transparent",border:"1px solid #1e3a5f",color:"#6ba3be"}}
               onClick={()=>setCaptions([])}>Clear Captions</button>
+          </>
+        )}
+
+        {activeTab === "record" && (
+          <>
+            <div style={s.voiceCenter}>
+              <div style={{...s.micRing,...(isRecording?{border:"3px solid #ff4444",boxShadow:"0 0 28px #ff444444"}:{})}}>
+                <button style={{...s.micBtn,...(isRecording?{background:"#ff444422"}:{})}}
+                  onClick={isRecording ? stopRecording : startRecording}>
+                  {isRecording ? "⏹" : "⏺"}
+                </button>
+              </div>
+              {isRecording
+                ? <p style={{color:"#ff4444"}}>● Recording... tap to stop</p>
+                : <p style={{color:"#6ba3be"}}>Tap to start recording</p>}
+              <p style={{color:"#2a4a6a",fontSize:12,textAlign:"center",maxWidth:300}}>
+                Records audio from your microphone. Files are saved to your device when you stop recording.
+              </p>
+            </div>
+            {recordings.length > 0 && (
+              <div style={{marginTop:16}}>
+                <p style={{color:"#6ba3be",fontSize:13,marginBottom:8}}>📁 Recordings ({recordings.length})</p>
+                {recordings.map((r,i) => (
+                  <div key={i} style={{background:"#060f1a",border:"1px solid #1e3a5f",borderRadius:10,padding:"10px 14px",marginBottom:8,display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
+                    <div style={{flex:1,minWidth:0}}>
+                      <p style={{margin:"0 0 4px",color:"#e8f4fd",fontSize:13,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.name}</p>
+                      <audio controls src={r.url} style={{width:"100%",height:32}} />
+                    </div>
+                    <button style={{...s.iconBtn,flexShrink:0}} onClick={()=>downloadRecording(r)}>⬇️</button>
+                  </div>
+                ))}
+                <button style={{...s.mainBtn,background:"transparent",border:"1px solid #1e3a5f",color:"#6ba3be",marginTop:8}}
+                  onClick={()=>setRecordings([])}>Clear All</button>
+              </div>
+            )}
           </>
         )}
       </div>
