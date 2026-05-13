@@ -1,5 +1,7 @@
 {
   "version": 2,
+  "buildCommand": null,
+  "outputDirectory": "public",
   "routes": [
     {
       "src": "/api/translate",
