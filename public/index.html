@@ -989,16 +989,7 @@ const LANG_NAMES = {
 };
 
 // ─── TRANSLATE VIA SECURE PROXY ──────────────────────
-async function callTranslate(text, srcLang, tgtLang) {
-  const response = await fetch('/api/translate', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text, srcLang, tgtLang })
-  });
-  const data = await response.json();
-  if (data.error) throw new Error(data.error);
-  return data;
-}
+
 
 // ─── TEXT TRANSLATION ─────────────────────────────────
 function onSrcLangChange() {
