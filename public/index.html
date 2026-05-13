@@ -996,12 +996,8 @@ async function callTranslate(text, srcLang, tgtLang) {
     body: JSON.stringify({ text, srcLang, tgtLang })
   });
   const data = await response.json();
-  const raw = data.content?.find(b => b.type === 'text')?.text || '{}';
-  try {
-    return JSON.parse(raw.replace(/```json|```/g,'').trim());
-  } catch {
-    return { detected: srcLang, detectedName: srcName, translation: raw };
-  }
+  if (data.error) throw new Error(data.error);
+  return data;
 }
 
 // ─── TEXT TRANSLATION ─────────────────────────────────
