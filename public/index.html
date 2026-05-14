@@ -494,6 +494,32 @@
   }
   .toast.show { opacity: 1; }
 
+  /* ── AUDIO WARNING MODAL ── */
+  .audio-warning-modal {
+    display: none;
+    position: fixed; inset: 0; z-index: 300;
+    background: rgba(0,0,0,0.75);
+    backdrop-filter: blur(6px);
+    align-items: center; justify-content: center;
+  }
+  .audio-warning-modal.show { display: flex; }
+  .audio-warning-box {
+    background: var(--surface);
+    border: 1px solid var(--warn);
+    border-radius: var(--radius);
+    padding: 24px 20px;
+    max-width: 320px;
+    width: 90%;
+    text-align: center;
+  }
+  .audio-warning-icon { font-size: 36px; margin-bottom: 12px; }
+  .audio-warning-title { font-size: 15px; font-weight: 800; margin-bottom: 8px; color: var(--warn); }
+  .audio-warning-msg { font-family: 'DM Mono', monospace; font-size: 11px; color: var(--muted); line-height: 1.7; margin-bottom: 16px; }
+  .audio-warning-btns { display: flex; gap: 10px; }
+  .audio-warning-btns button { flex: 1; padding: 11px; border-radius: var(--radius); font-family: 'Syne', sans-serif; font-weight: 700; font-size: 12px; cursor: pointer; border: none; }
+  .btn-try-anyway { background: var(--surface2); color: var(--text); border: 1px solid var(--border) !important; }
+  .btn-ok-got-it { background: var(--warn); color: #000; }
+
   /* ── BOTTOM NAV (mobile) ── */
   .bottom-nav {
     position: fixed; bottom: 0; left: 0; right: 0;
@@ -584,6 +610,13 @@
         <option value="vi">🇻🇳 Vietnamese</option>
         <option value="th">🇹🇭 Thai</option>
         <option value="uk">🇺🇦 Ukrainian</option>
+        <option value="id">🇮🇩 Indonesian</option>
+        <option value="fa">🇮🇷 Persian</option>
+        <option value="bn">🇧🇩 Bengali</option>
+        <option value="el">🇬🇷 Greek</option>
+        <option value="sv">🇸🇪 Swedish</option>
+        <option value="cs">🇨🇿 Czech</option>
+        <option value="ur">🇵🇰 Urdu</option>
       </select>
       <button class="swap-btn" onclick="swapLangs()" title="Swap languages">⇄</button>
       <select class="lang-sel" id="tgtLang">
@@ -606,6 +639,13 @@
         <option value="vi">🇻🇳 Vietnamese</option>
         <option value="th">🇹🇭 Thai</option>
         <option value="uk">🇺🇦 Ukrainian</option>
+        <option value="id">🇮🇩 Indonesian</option>
+        <option value="fa">🇮🇷 Persian</option>
+        <option value="bn">🇧🇩 Bengali</option>
+        <option value="el">🇬🇷 Greek</option>
+        <option value="sv">🇸🇪 Swedish</option>
+        <option value="cs">🇨🇿 Czech</option>
+        <option value="ur">🇵🇰 Urdu</option>
       </select>
     </div>
 
@@ -879,7 +919,6 @@
 <!-- Full Screen Result Modal -->
 <div id="resultModal" style="display:none; position:fixed; inset:0; z-index:200; background:rgba(0,0,0,0.85); backdrop-filter:blur(8px);">
   <div style="position:absolute; inset:0; display:flex; flex-direction:column;">
-    <!-- Modal Header -->
     <div style="display:flex; align-items:center; justify-content:space-between; padding:16px 20px; border-bottom:1px solid var(--border); background:var(--surface); flex-shrink:0;">
       <div>
         <div style="font-size:14px; font-weight:800;" id="modalTitle">Translation</div>
@@ -890,26 +929,38 @@
         <button onclick="closeModal()" style="background:var(--surface2); border:1px solid var(--border); color:var(--text); border-radius:8px; padding:8px 14px; font-family:'Syne',sans-serif; font-weight:700; font-size:12px; cursor:pointer;">✕ Close</button>
       </div>
     </div>
-    <!-- Modal Body — scrollable -->
     <div style="flex:1; overflow-y:auto; padding:20px;">
-      <!-- Source block (optional) -->
       <div id="modalSourceBlock" style="display:none; margin-bottom:20px;">
         <div style="font-size:10px; font-weight:700; letter-spacing:2px; color:var(--muted); text-transform:uppercase; margin-bottom:8px;">ORIGINAL</div>
         <div id="modalSourceText" style="background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:16px; font-family:'DM Mono',monospace; font-size:14px; line-height:1.8; color:var(--text); white-space:pre-wrap; word-break:break-word;"></div>
       </div>
-      <!-- Translation block -->
       <div>
         <div style="font-size:10px; font-weight:700; letter-spacing:2px; color:var(--muted); text-transform:uppercase; margin-bottom:8px;" id="modalTransLabel">TRANSLATION</div>
         <div id="modalTransText" style="background:var(--surface2); border:1px solid var(--border); border-left:3px solid var(--accent); border-radius:var(--radius); padding:16px; font-family:'DM Mono',monospace; font-size:15px; line-height:1.9; color:var(--text); white-space:pre-wrap; word-break:break-word;"></div>
       </div>
     </div>
-    <!-- Modal Footer -->
     <div style="padding:14px 20px; border-top:1px solid var(--border); background:var(--surface); flex-shrink:0;">
       <div style="display:flex; gap:10px;">
         <button onclick="saveModalToDevice()" style="flex:1; padding:13px 8px; background:var(--accent); border:none; border-radius:var(--radius); color:var(--bg); font-family:'Syne',sans-serif; font-weight:700; font-size:12px; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px;">💾 Save to Device</button>
         <button onclick="speakModalText()" style="flex:1; padding:13px 8px; background:var(--surface2); border:1px solid var(--border); border-radius:var(--radius); color:var(--text); font-family:'Syne',sans-serif; font-weight:700; font-size:12px; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px;">🔊 Listen</button>
         <button onclick="deleteModalResult()" style="flex:none; padding:13px 16px; background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.3); border-radius:var(--radius); color:var(--danger); font-family:'Syne',sans-serif; font-weight:700; font-size:12px; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px;">🗑 Delete</button>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- Audio Warning Modal -->
+<div class="audio-warning-modal" id="audioWarningModal">
+  <div class="audio-warning-box">
+    <div class="audio-warning-icon">🔇</div>
+    <div class="audio-warning-title">Audio Not Available</div>
+    <div class="audio-warning-msg" id="audioWarningMsg">
+      Your browser does not support text-to-speech for this language. 
+      Audio playback may be silent or unavailable.
+    </div>
+    <div class="audio-warning-btns">
+      <button class="btn-try-anyway" onclick="closeAudioWarning(true)">Try Anyway</button>
+      <button class="btn-ok-got-it" onclick="closeAudioWarning(false)">OK, Got It</button>
     </div>
   </div>
 </div>
@@ -951,6 +1002,33 @@ let currentDocText = '';
 let ocrTranslatedText = '';
 let isRecording = false;
 let recognition = null;
+let pendingSpeakText = null;
+let pendingSpeakLang = null;
+
+// ─── LANGUAGE MAP (all 26) ────────────────────────────
+const LANG_NAMES = {
+  auto:'Auto-Detected', en:'English', es:'Spanish', fr:'French', de:'German',
+  it:'Italian', pt:'Portuguese', zh:'Chinese', ja:'Japanese', ko:'Korean',
+  ar:'Arabic', ru:'Russian', hi:'Hindi', sw:'Swahili', nl:'Dutch',
+  pl:'Polish', tr:'Turkish', vi:'Vietnamese', th:'Thai', uk:'Ukrainian',
+  id:'Indonesian', fa:'Persian', bn:'Bengali', el:'Greek', sv:'Swedish',
+  cs:'Czech', ur:'Urdu'
+};
+
+// Languages with good browser TTS support
+const TTS_SUPPORTED = new Set(['en','es','fr','de','it','pt','zh','ja','ko','ru','nl','pl','sv','el','cs']);
+
+// Languages with limited/no browser TTS support
+const TTS_LIMITED = new Set(['ar','hi','sw','tr','vi','th','uk','id','fa','bn','ur','ko']);
+
+// Caption support map for Web Speech API
+const CAPTION_LANG_MAP = {
+  en:'en-US', es:'es-ES', fr:'fr-FR', de:'de-DE', it:'it-IT',
+  pt:'pt-BR', zh:'zh-CN', ja:'ja-JP', ko:'ko-KR', ar:'ar-SA',
+  ru:'ru-RU', hi:'hi-IN', nl:'nl-NL', pl:'pl-PL', tr:'tr-TR',
+  vi:'vi-VN', th:'th-TH', uk:'uk-UA', sv:'sv-SE', el:'el-GR',
+  cs:'cs-CZ', id:'id-ID', sw:'sw', fa:'fa-IR', bn:'bn-BD', ur:'ur-PK'
+};
 
 // ─── NAVIGATION ──────────────────────────────────────
 function switchTab(tab) {
@@ -959,12 +1037,6 @@ function switchTab(tab) {
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
   document.getElementById('panel-' + tab).classList.add('active');
   document.getElementById('nav-' + tab).classList.add('active');
-  document.querySelectorAll('.tab').forEach(t => {
-    if (t.textContent.toLowerCase().includes(tab === 'translate' ? '💬' : tab === 'camera' ? '📷' : tab === 'docs' ? '📄' : tab === 'history' ? '🕐' : '⚙️')) {
-      t.classList.add('active');
-    }
-  });
-  // sync tab bar
   const tabs = ['translate','camera','docs','history','settings'];
   document.querySelectorAll('.tab')[tabs.indexOf(tab)]?.classList.add('active');
   currentTab = tab;
@@ -980,13 +1052,42 @@ function showToast(msg, duration=2000) {
   setTimeout(() => t.classList.remove('show'), duration);
 }
 
-// ─── LANGUAGE MAP ────────────────────────────────────
-const LANG_NAMES = {
-  auto:'Auto-Detected', en:'English', es:'Spanish', fr:'French', de:'German',
-  it:'Italian', pt:'Portuguese', zh:'Chinese', ja:'Japanese', ko:'Korean',
-  ar:'Arabic', ru:'Russian', hi:'Hindi', sw:'Swahili', nl:'Dutch',
-  pl:'Polish', tr:'Turkish', vi:'Vietnamese', th:'Thai', uk:'Ukrainian'
-};
+// ─── AUDIO WARNING MODAL ─────────────────────────────
+function showAudioWarning(langCode, langName, onProceed) {
+  const modal = document.getElementById('audioWarningModal');
+  document.getElementById('audioWarningMsg').textContent =
+    `Your browser has limited or no text-to-speech support for ${langName}. Audio playback may be silent or incomplete depending on your device.`;
+  modal.classList.add('show');
+  window._audioWarningCallback = onProceed;
+}
+
+function closeAudioWarning(proceed) {
+  document.getElementById('audioWarningModal').classList.remove('show');
+  if (proceed && window._audioWarningCallback) {
+    window._audioWarningCallback();
+  }
+  window._audioWarningCallback = null;
+}
+
+// ─── SPEAK WITH WARNING CHECK ─────────────────────────
+function speakWithCheck(text, langCode, langName) {
+  if (!window.speechSynthesis) { showToast('TTS not supported in this browser'); return; }
+  if (!text || text.includes('will appear')) { showToast('Nothing to speak'); return; }
+
+  const doSpeak = () => {
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = CAPTION_LANG_MAP[langCode] || langCode;
+    speechSynthesis.speak(u);
+    showToast('Speaking…');
+  };
+
+  if (TTS_LIMITED.has(langCode)) {
+    showAudioWarning(langCode, langName || LANG_NAMES[langCode] || langCode, doSpeak);
+  } else {
+    doSpeak();
+  }
+}
 
 // ─── TRANSLATE VIA SECURE PROXY ──────────────────────
 async function callTranslate(text, srcLang, tgtLang) {
@@ -1002,7 +1103,6 @@ async function callTranslate(text, srcLang, tgtLang) {
 
 // ─── TEXT TRANSLATION ─────────────────────────────────
 function onSrcLangChange() {
-  const val = document.getElementById('srcLang').value;
   document.getElementById('detectedLangBar').textContent = '';
 }
 
@@ -1101,11 +1201,8 @@ function viewFullResult() {
 
 function speakResult() {
   const text = document.getElementById('resultBox').querySelector('span')?.textContent || '';
-  if (!text || text.includes('will appear')) { showToast('Nothing to speak'); return; }
-  if (!window.speechSynthesis) { showToast('TTS not supported'); return; }
-  const u = new SpeechSynthesisUtterance(text);
-  u.lang = document.getElementById('tgtLang').value;
-  speechSynthesis.speak(u);
+  const tgtLang = document.getElementById('tgtLang').value;
+  speakWithCheck(text, tgtLang, LANG_NAMES[tgtLang]);
 }
 
 // ─── MIC / SPEECH RECOGNITION ─────────────────────────
@@ -1125,16 +1222,22 @@ function toggleMic() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   recognition = new SR();
   const srcLang = document.getElementById('srcLang').value;
-  recognition.lang = srcLang === 'auto' ? 'en-US' : srcLang;
+  const mappedLang = CAPTION_LANG_MAP[srcLang] || (srcLang === 'auto' ? 'en-US' : srcLang);
+  recognition.lang = mappedLang;
   recognition.continuous = false;
   recognition.interimResults = false;
+
   recognition.onresult = (e) => {
     const transcript = e.results[0][0].transcript;
     document.getElementById('srcText').value = transcript;
     doTranslate();
   };
   recognition.onerror = (e) => {
-    showToast('Mic error: ' + e.error);
+    if (e.error === 'language-not-supported') {
+      showToast('⚠️ Mic not supported for this language — try English', 3500);
+    } else {
+      showToast('Mic error: ' + e.error);
+    }
     isRecording = false;
     btn.classList.remove('recording');
     btn.textContent = '🎤';
@@ -1148,7 +1251,14 @@ function toggleMic() {
   isRecording = true;
   btn.classList.add('recording');
   btn.textContent = '⏹';
-  showToast('Listening…', 3000);
+
+  // Warn if language has limited caption support
+  const limitedCaptionLangs = new Set(['sw','fa','bn','ur','id']);
+  if (limitedCaptionLangs.has(srcLang)) {
+    showToast('⚠️ Limited mic support for this language', 3000);
+  } else {
+    showToast('Listening…', 3000);
+  }
 }
 
 // ─── CAMERA OCR ───────────────────────────────────────
@@ -1195,7 +1305,6 @@ async function captureAndOCR() {
   document.getElementById('ocrLangDetected').textContent = '';
 
   try {
-    // Use Tesseract for OCR
     const { data: { text } } = await Tesseract.recognize(canvas, 'eng+spa+fra+deu+chi_sim+jpn+kor+ara+rus', {
       logger: m => {}
     });
@@ -1204,7 +1313,6 @@ async function captureAndOCR() {
 
     document.getElementById('ocrOrigText').textContent = cleanedText;
 
-    // Now translate
     const srcLang = document.getElementById('camSrcLang').value;
     const tgtLang = document.getElementById('camTgtLang').value;
     document.getElementById('ocrTransText').innerHTML = '<span class="spinner"></span> Translating…';
@@ -1214,7 +1322,6 @@ async function captureAndOCR() {
     document.getElementById('ocrLangDetected').textContent = result.detectedName || '';
     ocrTranslatedText = result.translation;
 
-    // Save to history
     const histOn = document.getElementById('toggleHistory').classList.contains('on');
     if (histOn) {
       translationHistory.unshift({
@@ -1304,7 +1411,6 @@ async function processFile(file) {
 
     if (imageExts.includes(ext)) {
       showProgress(30);
-      // OCR the image
       const { data: { text: ocrText } } = await Tesseract.recognize(file, 'eng+spa+fra+deu+chi_sim', {
         logger: m => {}
       });
@@ -1348,14 +1454,12 @@ async function translateDocument() {
   showProgress(20);
 
   try {
-    // Split long docs into chunks and translate
     const chunks = chunkText(currentDocText, 3000);
     let translatedChunks = [];
     for (let i = 0; i < chunks.length; i++) {
       showProgress(20 + Math.round((i / chunks.length) * 70));
       const result = await callTranslate(chunks[i], srcLang, tgtLang);
       translatedChunks.push(result.translation);
-      // Update lang detection from first chunk
       if (i === 0 && result.detectedName) {
         document.getElementById('docSrcLang').value !== 'auto' ||
         showToast('Detected: ' + result.detectedName);
@@ -1472,16 +1576,10 @@ function deleteModalResult() {
 
 function speakModalText() {
   const text = window._modalTransText || '';
-  if (!text) return;
-  if (!window.speechSynthesis) { showToast('TTS not supported'); return; }
-  speechSynthesis.cancel();
-  const u = new SpeechSynthesisUtterance(text);
-  u.lang = window._modalTgtLang || 'en';
-  speechSynthesis.speak(u);
-  showToast('Speaking…');
+  const tgtLang = window._modalTgtLang || 'en';
+  speakWithCheck(text, tgtLang, LANG_NAMES[tgtLang]);
 }
 
-// close modal on backdrop click
 document.getElementById('resultModal').addEventListener('click', function(e) {
   if (e.target === this) closeModal();
 });
@@ -1491,7 +1589,6 @@ function chunkText(text, size) {
   let i = 0;
   while (i < text.length) {
     let end = i + size;
-    // Try to break at paragraph
     if (end < text.length) {
       const brk = text.lastIndexOf('\n\n', end);
       if (brk > i + size/2) end = brk;
@@ -1533,14 +1630,6 @@ function clearHistory() {
 }
 
 // ─── UTILS ───────────────────────────────────────────
-function downloadText(content, filename) {
-  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = filename; a.click();
-  URL.revokeObjectURL(url);
-}
-
 function copyOCRInline() {
   if (!ocrTranslatedText) { showToast('Nothing to copy'); return; }
   navigator.clipboard.writeText(ocrTranslatedText).then(() => showToast('Copied!'));
@@ -1566,7 +1655,7 @@ function hideProgress() {
   document.getElementById('progressBar').style.width = '0%';
 }
 
-// Init history render
+// Init
 renderHistory();
 </script>
 </body>
