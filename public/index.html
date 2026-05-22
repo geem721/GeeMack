@@ -5,6 +5,44 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>TalkBridge — Universal Translator</title>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:ital,wght@0,300;0,400;1,300&display=swap" rel="stylesheet"/>
+
+<!-- Firebase SDK -->
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+  import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged, sendEmailVerification } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyDDkUS5iEoFD9oI9_KH7KzcBqADrVWStQ4",
+    authDomain: "talkbridge-492fa.firebaseapp.com",
+    projectId: "talkbridge-492fa",
+    storageBucket: "talkbridge-492fa.firebasestorage.app",
+    messagingSenderId: "856676672332",
+    appId: "1:856676672332:web:d508705c05a7b2238325e9",
+    measurementId: "G-1K6LCTZ4C0"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const auth = getAuth(app);
+
+  window._tbAuth = auth;
+  window._tbSignIn = (email, password) => signInWithEmailAndPassword(auth, email, password);
+  window._tbSignUp = (email, password) => createUserWithEmailAndPassword(auth, email, password);
+  window._tbSignOut = () => signOut(auth);
+  window._tbSendVerification = (user) => sendEmailVerification(user);
+
+  onAuthStateChanged(auth, (user) => {
+    if (user) {
+      if (!user.emailVerified) {
+        showAuthScreen('verify');
+      } else {
+        showApp(user);
+      }
+    } else {
+      showAuthScreen('login');
+    }
+  });
+</script>
+
 <style>
   :root {
     --bg: #0a0a0f;
@@ -32,25 +70,141 @@
   body::before {
     content: '';
     position: fixed;
-    top: -30%;
-    right: -20%;
-    width: 600px;
-    height: 600px;
+    top: -30%; right: -20%;
+    width: 600px; height: 600px;
     background: radial-gradient(circle, rgba(124,58,237,0.12) 0%, transparent 70%);
-    pointer-events: none;
-    z-index: 0;
+    pointer-events: none; z-index: 0;
   }
   body::after {
     content: '';
     position: fixed;
-    bottom: -20%;
-    left: -10%;
-    width: 500px;
-    height: 500px;
+    bottom: -20%; left: -10%;
+    width: 500px; height: 500px;
     background: radial-gradient(circle, rgba(0,229,255,0.08) 0%, transparent 70%);
-    pointer-events: none;
-    z-index: 0;
+    pointer-events: none; z-index: 0;
   }
+
+  /* ── AUTH SCREEN ── */
+  #authScreen {
+    display: none;
+    position: fixed; inset: 0; z-index: 500;
+    background: var(--bg);
+    align-items: center; justify-content: center;
+    padding: 20px;
+  }
+  #authScreen.show { display: flex; }
+  .auth-box {
+    width: 100%; max-width: 400px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 32px 24px;
+    position: relative;
+    z-index: 1;
+  }
+  .auth-logo {
+    display: flex; align-items: center; gap: 10px;
+    margin-bottom: 28px; justify-content: center;
+  }
+  .auth-logo-icon {
+    width: 42px; height: 42px;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    border-radius: 12px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 20px;
+  }
+  .auth-logo-text { font-size: 22px; font-weight: 800; letter-spacing: -0.5px; }
+  .auth-logo-text span { color: var(--accent); }
+  .auth-title {
+    font-size: 20px; font-weight: 800;
+    text-align: center; margin-bottom: 6px;
+  }
+  .auth-subtitle {
+    font-family: 'DM Mono', monospace;
+    font-size: 11px; color: var(--muted);
+    text-align: center; margin-bottom: 24px;
+  }
+  .auth-field {
+    margin-bottom: 14px;
+  }
+  .auth-field label {
+    display: block;
+    font-size: 11px; font-weight: 700;
+    letter-spacing: 1px; text-transform: uppercase;
+    color: var(--muted); margin-bottom: 6px;
+  }
+  .auth-field input {
+    width: 100%;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px 14px;
+    color: var(--text);
+    font-family: 'DM Mono', monospace;
+    font-size: 14px;
+    transition: border-color 0.2s;
+  }
+  .auth-field input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: var(--glow);
+  }
+  .auth-btn {
+    width: 100%;
+    padding: 14px;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    border: none; border-radius: var(--radius);
+    color: var(--bg);
+    font-family: 'Syne', sans-serif;
+    font-size: 14px; font-weight: 800;
+    cursor: pointer;
+    margin-top: 6px;
+    transition: filter 0.2s, transform 0.2s;
+  }
+  .auth-btn:hover { filter: brightness(1.1); transform: translateY(-1px); }
+  .auth-btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+  .auth-error {
+    background: rgba(239,68,68,0.1);
+    border: 1px solid rgba(239,68,68,0.3);
+    border-radius: var(--radius);
+    padding: 10px 14px;
+    font-family: 'DM Mono', monospace;
+    font-size: 11px; color: var(--danger);
+    margin-bottom: 14px;
+    display: none;
+  }
+  .auth-error.show { display: block; }
+  .auth-success {
+    background: rgba(16,185,129,0.1);
+    border: 1px solid rgba(16,185,129,0.3);
+    border-radius: var(--radius);
+    padding: 10px 14px;
+    font-family: 'DM Mono', monospace;
+    font-size: 11px; color: var(--accent3);
+    margin-bottom: 14px;
+    display: none;
+  }
+  .auth-success.show { display: block; }
+  .auth-switch {
+    text-align: center;
+    font-family: 'DM Mono', monospace;
+    font-size: 11px; color: var(--muted);
+    margin-top: 18px;
+  }
+  .auth-switch a {
+    color: var(--accent); cursor: pointer;
+    text-decoration: none; font-weight: 700;
+  }
+  .auth-switch a:hover { text-decoration: underline; }
+  .auth-divider {
+    height: 1px; background: var(--border);
+    margin: 20px 0;
+  }
+  .verify-icon { font-size: 48px; text-align: center; margin-bottom: 16px; }
+
+  /* ── MAIN APP ── */
+  #mainApp { display: none; }
+  #mainApp.show { display: block; }
 
   /* ── HEADER ── */
   header {
@@ -71,10 +225,10 @@
   }
   .logo-text { font-size: 18px; font-weight: 800; letter-spacing: -0.5px; }
   .logo-text span { color: var(--accent); }
+  .header-right { display: flex; align-items: center; gap: 10px; }
   .status-pill {
     font-family: 'DM Mono', monospace;
-    font-size: 10px;
-    padding: 4px 10px;
+    font-size: 10px; padding: 4px 10px;
     border-radius: 20px;
     border: 1px solid var(--accent3);
     color: var(--accent3);
@@ -88,28 +242,34 @@
     animation: pulse 2s infinite;
   }
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+  .signout-btn {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--muted);
+    font-family: 'DM Mono', monospace;
+    font-size: 10px; padding: 5px 10px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .signout-btn:hover { border-color: var(--danger); color: var(--danger); }
 
   /* ── TABS ── */
   .tabs {
     display: flex;
     background: var(--surface);
     border-bottom: 1px solid var(--border);
-    overflow-x: auto;
-    scrollbar-width: none;
+    overflow-x: auto; scrollbar-width: none;
     position: relative; z-index: 10;
   }
   .tabs::-webkit-scrollbar { display: none; }
   .tab {
-    flex: none;
-    padding: 13px 18px;
-    font-size: 12px;
-    font-weight: 600;
-    letter-spacing: 0.5px;
-    cursor: pointer;
+    flex: none; padding: 13px 18px;
+    font-size: 12px; font-weight: 600;
+    letter-spacing: 0.5px; cursor: pointer;
     color: var(--muted);
     border-bottom: 2px solid transparent;
-    white-space: nowrap;
-    transition: all 0.2s;
+    white-space: nowrap; transition: all 0.2s;
     display: flex; align-items: center; gap: 6px;
     background: none; border-top: none; border-left: none; border-right: none;
   }
@@ -134,10 +294,8 @@
     padding: 10px 14px;
     color: var(--text);
     font-family: 'Syne', sans-serif;
-    font-size: 13px;
-    font-weight: 600;
-    cursor: pointer;
-    appearance: none;
+    font-size: 13px; font-weight: 600;
+    cursor: pointer; appearance: none;
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b6b8a' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
     background-repeat: no-repeat;
     background-position: right 12px center;
@@ -149,37 +307,22 @@
     border-radius: 50%;
     border: 1px solid var(--border);
     background: var(--surface2);
-    color: var(--accent);
-    font-size: 16px;
+    color: var(--accent); font-size: 16px;
     cursor: pointer;
     display: flex; align-items: center; justify-content: center;
-    transition: all 0.2s;
-    flex-shrink: 0;
+    transition: all 0.2s; flex-shrink: 0;
   }
   .swap-btn:hover { background: var(--accent); color: var(--bg); }
-  .auto-badge {
-    font-family: 'DM Mono', monospace;
-    font-size: 9px;
-    background: rgba(0,229,255,0.1);
-    color: var(--accent);
-    border: 1px solid rgba(0,229,255,0.3);
-    border-radius: 4px;
-    padding: 2px 6px;
-    margin-left: 4px;
-  }
 
   .textarea-wrap { padding: 8px 20px; position: relative; }
   .tx-area {
-    width: 100%;
-    min-height: 120px;
+    width: 100%; min-height: 120px;
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    padding: 14px;
-    color: var(--text);
+    padding: 14px; color: var(--text);
     font-family: 'DM Mono', monospace;
-    font-size: 14px;
-    resize: none;
+    font-size: 14px; resize: none;
     transition: border-color 0.2s;
   }
   .tx-area:focus { outline: none; border-color: var(--accent); box-shadow: var(--glow); }
@@ -187,10 +330,8 @@
 
   .detected-lang {
     font-family: 'DM Mono', monospace;
-    font-size: 10px;
-    color: var(--accent);
-    padding: 4px 20px;
-    min-height: 20px;
+    font-size: 10px; color: var(--accent);
+    padding: 4px 20px; min-height: 20px;
     transition: all 0.3s;
   }
 
@@ -202,10 +343,8 @@
     border-radius: var(--radius);
     padding: 14px;
     font-family: 'DM Mono', monospace;
-    font-size: 14px;
-    min-height: 80px;
-    color: var(--text);
-    line-height: 1.6;
+    font-size: 14px; min-height: 80px;
+    color: var(--text); line-height: 1.6;
     position: relative;
   }
   .result-box .placeholder { color: var(--muted); font-style: italic; font-size: 12px; }
@@ -236,15 +375,12 @@
   .btn-secondary:hover { border-color: var(--accent); color: var(--accent); }
   .btn-danger { background: rgba(239,68,68,0.12); color: var(--danger); border: 1px solid rgba(239,68,68,0.3); }
   .btn-mic {
-    width: 60px; height: 60px;
-    border-radius: 50%;
+    width: 60px; height: 60px; border-radius: 50%;
     background: linear-gradient(135deg, var(--accent), var(--accent2));
-    border: none; cursor: pointer;
-    font-size: 22px;
+    border: none; cursor: pointer; font-size: 22px;
     display: flex; align-items: center; justify-content: center;
     box-shadow: 0 0 30px rgba(0,229,255,0.3);
-    transition: all 0.2s;
-    flex-shrink: 0;
+    transition: all 0.2s; flex-shrink: 0;
   }
   .btn-mic:hover { transform: scale(1.08); }
   .btn-mic.recording {
@@ -260,15 +396,10 @@
   .camera-wrap {
     margin: 16px 20px;
     border-radius: var(--radius);
-    overflow: hidden;
-    background: #000;
-    position: relative;
-    border: 1px solid var(--border);
+    overflow: hidden; background: #000;
+    position: relative; border: 1px solid var(--border);
   }
-  #cameraFeed {
-    width: 100%; display: block;
-    max-height: 300px; object-fit: cover;
-  }
+  #cameraFeed { width: 100%; display: block; max-height: 300px; object-fit: cover; }
   .camera-overlay {
     position: absolute; inset: 0;
     display: flex; align-items: center; justify-content: center;
@@ -278,58 +409,33 @@
   .scan-frame {
     width: 220px; height: 120px;
     border: 2px solid var(--accent);
-    border-radius: 8px;
-    position: relative;
+    border-radius: 8px; position: relative;
     box-shadow: 0 0 0 1000px rgba(0,0,0,0.4);
   }
   .scan-frame::before {
     content: '';
-    position: absolute;
-    top: 0; left: 0; right: 0;
-    height: 2px;
+    position: absolute; top: 0; left: 0; right: 0; height: 2px;
     background: linear-gradient(90deg, transparent, var(--accent), transparent);
     animation: scan 2s infinite linear;
   }
-  @keyframes scan {
-    0% { top: 0; }
-    100% { top: 100%; }
-  }
-  .scan-label {
-    font-family: 'DM Mono', monospace;
-    font-size: 11px;
-    color: var(--accent);
-    background: rgba(0,0,0,0.6);
-    padding: 4px 12px;
-    border-radius: 20px;
-    border: 1px solid rgba(0,229,255,0.3);
-  }
-  .cam-controls {
-    display: flex; gap: 10px; padding: 0 20px 12px;
-    align-items: center;
-  }
+  @keyframes scan { 0% { top: 0; } 100% { top: 100%; } }
+  .cam-controls { display: flex; gap: 10px; padding: 0 20px 12px; align-items: center; }
   #captureCanvas { display: none; }
-
   .ocr-result {
     margin: 0 20px 12px;
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: var(--radius);
-    overflow: hidden;
+    border-radius: var(--radius); overflow: hidden;
   }
   .ocr-result-header {
     display: flex; justify-content: space-between; align-items: center;
-    padding: 10px 14px;
-    border-bottom: 1px solid var(--border);
-    font-size: 11px; font-weight: 700; letter-spacing: 1px;
-    color: var(--muted);
+    padding: 10px 14px; border-bottom: 1px solid var(--border);
+    font-size: 11px; font-weight: 700; letter-spacing: 1px; color: var(--muted);
   }
   .ocr-result-body {
     padding: 12px 14px;
     font-family: 'DM Mono', monospace;
-    font-size: 13px;
-    line-height: 1.6;
-    min-height: 60px;
-    color: var(--text);
+    font-size: 13px; line-height: 1.6; min-height: 60px; color: var(--text);
   }
   .ocr-result-body .placeholder { color: var(--muted); font-style: italic; font-size: 11px; }
 
@@ -338,180 +444,80 @@
     margin: 16px 20px;
     border: 2px dashed var(--border);
     border-radius: var(--radius);
-    padding: 40px 20px;
-    text-align: center;
-    cursor: pointer;
-    transition: all 0.3s;
-    background: var(--surface);
-    position: relative;
+    padding: 40px 20px; text-align: center;
+    cursor: pointer; transition: all 0.3s;
+    background: var(--surface); position: relative;
   }
-  .drop-zone:hover, .drop-zone.drag-over {
-    border-color: var(--accent);
-    background: rgba(0,229,255,0.04);
-  }
-  .drop-zone input[type=file] {
-    position: absolute; inset: 0;
-    opacity: 0; cursor: pointer; width: 100%; height: 100%;
-  }
+  .drop-zone:hover, .drop-zone.drag-over { border-color: var(--accent); background: rgba(0,229,255,0.04); }
+  .drop-zone input[type=file] { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; }
   .drop-icon { font-size: 40px; margin-bottom: 12px; }
   .drop-title { font-size: 15px; font-weight: 700; margin-bottom: 6px; }
-  .drop-sub {
-    font-family: 'DM Mono', monospace;
-    font-size: 10px; color: var(--muted); line-height: 1.8;
-  }
-  .supported-formats {
-    display: flex; flex-wrap: wrap; gap: 6px;
-    padding: 0 20px 16px; justify-content: center;
-  }
-  .fmt-tag {
-    font-family: 'DM Mono', monospace;
-    font-size: 9px; padding: 3px 8px;
-    border-radius: 4px;
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    color: var(--muted);
-  }
-  .doc-preview {
-    margin: 0 20px 12px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    overflow: hidden;
-  }
-  .doc-preview-header {
-    display: flex; align-items: center; gap: 10px;
-    padding: 12px 14px;
-    border-bottom: 1px solid var(--border);
-    background: var(--surface2);
-  }
+  .drop-sub { font-family: 'DM Mono', monospace; font-size: 10px; color: var(--muted); line-height: 1.8; }
+  .supported-formats { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 20px 16px; justify-content: center; }
+  .fmt-tag { font-family: 'DM Mono', monospace; font-size: 9px; padding: 3px 8px; border-radius: 4px; background: var(--surface2); border: 1px solid var(--border); color: var(--muted); }
+  .doc-preview { margin: 0 20px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+  .doc-preview-header { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--border); background: var(--surface2); }
   .doc-icon { font-size: 22px; }
   .doc-name { font-size: 13px; font-weight: 700; }
   .doc-meta { font-family: 'DM Mono', monospace; font-size: 10px; color: var(--muted); }
-  .doc-body {
-    padding: 12px 14px;
-    font-family: 'DM Mono', monospace;
-    font-size: 12px;
-    line-height: 1.7;
-    max-height: 200px;
-    overflow-y: auto;
-    color: var(--text);
-  }
-  .progress-bar-wrap {
-    margin: 8px 20px;
-    height: 4px;
-    background: var(--surface2);
-    border-radius: 2px;
-    overflow: hidden;
-    display: none;
-  }
-  .progress-bar {
-    height: 100%;
-    background: linear-gradient(90deg, var(--accent), var(--accent2));
-    border-radius: 2px;
-    transition: width 0.3s;
-    width: 0%;
-  }
+  .doc-body { padding: 12px 14px; font-family: 'DM Mono', monospace; font-size: 12px; line-height: 1.7; max-height: 200px; overflow-y: auto; color: var(--text); }
+  .progress-bar-wrap { margin: 8px 20px; height: 4px; background: var(--surface2); border-radius: 2px; overflow: hidden; display: none; }
+  .progress-bar { height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent2)); border-radius: 2px; transition: width 0.3s; width: 0%; }
 
   /* ── HISTORY ── */
   .history-list { padding: 12px 20px; display: flex; flex-direction: column; gap: 10px; }
-  .history-item {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 12px 14px;
-    position: relative;
-    overflow: hidden;
-  }
-  .history-item::before {
-    content: '';
-    position: absolute; left: 0; top: 0; bottom: 0;
-    width: 3px;
-    background: var(--accent2);
-  }
-  .history-langs {
-    font-family: 'DM Mono', monospace;
-    font-size: 10px; color: var(--muted); margin-bottom: 6px;
-    display: flex; align-items: center; gap: 6px;
-  }
+  .history-item { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; position: relative; overflow: hidden; }
+  .history-item::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--accent2); }
+  .history-langs { font-family: 'DM Mono', monospace; font-size: 10px; color: var(--muted); margin-bottom: 6px; display: flex; align-items: center; gap: 6px; }
   .history-original { font-size: 13px; margin-bottom: 4px; font-weight: 600; }
   .history-translated { font-size: 12px; color: var(--accent); font-family: 'DM Mono', monospace; }
   .history-time { font-family: 'DM Mono', monospace; font-size: 9px; color: var(--muted); margin-top: 6px; }
-  .history-empty {
-    text-align: center; padding: 50px 20px;
-    color: var(--muted); font-family: 'DM Mono', monospace; font-size: 12px;
-  }
+  .history-empty { text-align: center; padding: 50px 20px; color: var(--muted); font-family: 'DM Mono', monospace; font-size: 12px; }
 
   /* ── SETTINGS ── */
   .settings-section { padding: 16px 20px 0; }
-  .settings-title {
-    font-size: 10px; font-weight: 700; letter-spacing: 2px;
-    color: var(--muted); text-transform: uppercase; margin-bottom: 10px;
-  }
-  .setting-row {
-    display: flex; align-items: center; justify-content: space-between;
+  .settings-title { font-size: 10px; font-weight: 700; letter-spacing: 2px; color: var(--muted); text-transform: uppercase; margin-bottom: 10px; }
+  .setting-row { display: flex; align-items: center; justify-content: space-between; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; margin-bottom: 8px; }
+  .setting-label { font-size: 13px; font-weight: 600; }
+  .setting-desc { font-family: 'DM Mono', monospace; font-size: 10px; color: var(--muted); margin-top: 2px; }
+  .toggle { width: 44px; height: 24px; border-radius: 12px; background: var(--border); position: relative; cursor: pointer; transition: background 0.2s; flex-shrink: 0; border: none; }
+  .toggle.on { background: var(--accent); }
+  .toggle::after { content: ''; position: absolute; width: 18px; height: 18px; border-radius: 50%; background: #fff; top: 3px; left: 3px; transition: left 0.2s; }
+  .toggle.on::after { left: 23px; }
+
+  /* ── ACCOUNT INFO ── */
+  .account-info {
+    margin: 16px 20px;
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    padding: 14px;
-    margin-bottom: 8px;
+    padding: 16px;
+    display: flex; align-items: center; gap: 12px;
   }
-  .setting-label { font-size: 13px; font-weight: 600; }
-  .setting-desc { font-family: 'DM Mono', monospace; font-size: 10px; color: var(--muted); margin-top: 2px; }
-  .toggle {
-    width: 44px; height: 24px;
-    border-radius: 12px;
-    background: var(--border);
-    position: relative;
-    cursor: pointer;
-    transition: background 0.2s;
-    flex-shrink: 0;
-    border: none;
-  }
-  .toggle.on { background: var(--accent); }
-  .toggle::after {
-    content: '';
-    position: absolute;
-    width: 18px; height: 18px;
+  .account-avatar {
+    width: 40px; height: 40px;
     border-radius: 50%;
-    background: #fff;
-    top: 3px; left: 3px;
-    transition: left 0.2s;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px; flex-shrink: 0;
   }
-  .toggle.on::after { left: 23px; }
+  .account-email { font-family: 'DM Mono', monospace; font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .account-name { font-size: 13px; font-weight: 700; }
 
   /* ── TOAST ── */
   .toast {
     position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%);
-    background: var(--surface2);
-    border: 1px solid var(--accent);
-    color: var(--accent);
-    font-family: 'DM Mono', monospace; font-size: 12px;
-    padding: 10px 20px; border-radius: 20px;
-    z-index: 999;
-    opacity: 0; pointer-events: none;
-    transition: opacity 0.3s;
-    white-space: nowrap;
+    background: var(--surface2); border: 1px solid var(--accent);
+    color: var(--accent); font-family: 'DM Mono', monospace; font-size: 12px;
+    padding: 10px 20px; border-radius: 20px; z-index: 999;
+    opacity: 0; pointer-events: none; transition: opacity 0.3s; white-space: nowrap;
   }
   .toast.show { opacity: 1; }
 
   /* ── AUDIO WARNING MODAL ── */
-  .audio-warning-modal {
-    display: none;
-    position: fixed; inset: 0; z-index: 300;
-    background: rgba(0,0,0,0.75);
-    backdrop-filter: blur(6px);
-    align-items: center; justify-content: center;
-  }
+  .audio-warning-modal { display: none; position: fixed; inset: 0; z-index: 300; background: rgba(0,0,0,0.75); backdrop-filter: blur(6px); align-items: center; justify-content: center; }
   .audio-warning-modal.show { display: flex; }
-  .audio-warning-box {
-    background: var(--surface);
-    border: 1px solid var(--warn);
-    border-radius: var(--radius);
-    padding: 24px 20px;
-    max-width: 320px;
-    width: 90%;
-    text-align: center;
-  }
+  .audio-warning-box { background: var(--surface); border: 1px solid var(--warn); border-radius: var(--radius); padding: 24px 20px; max-width: 320px; width: 90%; text-align: center; }
   .audio-warning-icon { font-size: 36px; margin-bottom: 12px; }
   .audio-warning-title { font-size: 15px; font-weight: 800; margin-bottom: 8px; color: var(--warn); }
   .audio-warning-msg { font-family: 'DM Mono', monospace; font-size: 11px; color: var(--muted); line-height: 1.7; margin-bottom: 16px; }
@@ -520,44 +526,18 @@
   .btn-try-anyway { background: var(--surface2); color: var(--text); border: 1px solid var(--border) !important; }
   .btn-ok-got-it { background: var(--warn); color: #000; }
 
-  /* ── BOTTOM NAV (mobile) ── */
-  .bottom-nav {
-    position: fixed; bottom: 0; left: 0; right: 0;
-    background: rgba(10,10,15,0.95);
-    backdrop-filter: blur(16px);
-    border-top: 1px solid var(--border);
-    display: flex;
-    z-index: 100;
-  }
-  .nav-btn {
-    flex: 1; padding: 10px 5px 12px;
-    background: none; border: none;
-    color: var(--muted);
-    font-family: 'Syne', sans-serif;
-    font-size: 9px; font-weight: 700;
-    letter-spacing: 0.5px;
-    cursor: pointer;
-    display: flex; flex-direction: column; align-items: center; gap: 4px;
-    transition: color 0.2s;
-  }
+  /* ── BOTTOM NAV ── */
+  .bottom-nav { position: fixed; bottom: 0; left: 0; right: 0; background: rgba(10,10,15,0.95); backdrop-filter: blur(16px); border-top: 1px solid var(--border); display: flex; z-index: 100; }
+  .nav-btn { flex: 1; padding: 10px 5px 12px; background: none; border: none; color: var(--muted); font-family: 'Syne', sans-serif; font-size: 9px; font-weight: 700; letter-spacing: 0.5px; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 4px; transition: color 0.2s; }
   .nav-btn .icon { font-size: 20px; }
   .nav-btn.active { color: var(--accent); }
 
   /* ── LOADING SPINNER ── */
-  .spinner {
-    display: inline-block;
-    width: 16px; height: 16px;
-    border: 2px solid rgba(0,229,255,0.2);
-    border-top-color: var(--accent);
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-  }
+  .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid rgba(0,229,255,0.2); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
 
   .section-gap { height: 16px; }
   .divider { height: 1px; background: var(--border); margin: 12px 20px; }
-
-  /* scrollbar */
   ::-webkit-scrollbar { width: 4px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
@@ -565,14 +545,93 @@
 </head>
 <body>
 
+<!-- ═══ AUTH SCREEN ═══ -->
+<div id="authScreen" class="show">
+  <div class="auth-box">
+    <div class="auth-logo">
+      <div class="auth-logo-icon">🌐</div>
+      <div class="auth-logo-text">Talk<span>Bridge</span></div>
+    </div>
+
+    <!-- LOGIN FORM -->
+    <div id="loginForm">
+      <div class="auth-title">Welcome Back</div>
+      <div class="auth-subtitle">Sign in to your TalkBridge account</div>
+      <div class="auth-error" id="loginError"></div>
+      <div class="auth-success" id="loginSuccess"></div>
+      <div class="auth-field">
+        <label>Email</label>
+        <input type="email" id="loginEmail" placeholder="you@example.com" autocomplete="email"/>
+      </div>
+      <div class="auth-field">
+        <label>Password</label>
+        <input type="password" id="loginPassword" placeholder="••••••••" autocomplete="current-password"/>
+      </div>
+      <button class="auth-btn" id="loginBtn" onclick="handleLogin()">Sign In</button>
+      <div class="auth-divider"></div>
+      <div class="auth-switch">
+        Don't have an account? <a onclick="showAuthScreen('signup')">Sign up free</a>
+      </div>
+    </div>
+
+    <!-- SIGNUP FORM -->
+    <div id="signupForm" style="display:none;">
+      <div class="auth-title">Create Account</div>
+      <div class="auth-subtitle">Join TalkBridge — translate anything, anywhere</div>
+      <div class="auth-error" id="signupError"></div>
+      <div class="auth-success" id="signupSuccess"></div>
+      <div class="auth-field">
+        <label>Email</label>
+        <input type="email" id="signupEmail" placeholder="you@example.com" autocomplete="email"/>
+      </div>
+      <div class="auth-field">
+        <label>Password</label>
+        <input type="password" id="signupPassword" placeholder="Min. 6 characters" autocomplete="new-password"/>
+      </div>
+      <div class="auth-field">
+        <label>Confirm Password</label>
+        <input type="password" id="signupConfirm" placeholder="Repeat password" autocomplete="new-password"/>
+      </div>
+      <button class="auth-btn" id="signupBtn" onclick="handleSignup()">Create Account</button>
+      <div class="auth-divider"></div>
+      <div class="auth-switch">
+        Already have an account? <a onclick="showAuthScreen('login')">Sign in</a>
+      </div>
+    </div>
+
+    <!-- VERIFY EMAIL -->
+    <div id="verifyForm" style="display:none;">
+      <div class="verify-icon">📧</div>
+      <div class="auth-title">Verify Your Email</div>
+      <div class="auth-subtitle">We sent a verification link to your email address. Please check your inbox and click the link to continue.</div>
+      <div class="auth-error" id="verifyError"></div>
+      <div class="auth-success" id="verifySuccess"></div>
+      <div style="height:16px;"></div>
+      <button class="auth-btn" onclick="handleCheckVerification()">I've Verified — Continue</button>
+      <div style="height:10px;"></div>
+      <button class="auth-btn" style="background: var(--surface2); color: var(--text); border: 1px solid var(--border);" onclick="handleResendVerification()">Resend Email</button>
+      <div class="auth-divider"></div>
+      <div class="auth-switch">
+        Wrong account? <a onclick="handleSignOutFromVerify()">Sign out</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ MAIN APP ═══ -->
+<div id="mainApp">
+
 <header>
   <div class="logo">
     <div class="logo-icon">🌐</div>
     <div class="logo-text">Talk<span>Bridge</span></div>
   </div>
-  <div class="status-pill">
-    <div class="status-dot"></div>
-    LIVE
+  <div class="header-right">
+    <div class="status-pill">
+      <div class="status-dot"></div>
+      LIVE
+    </div>
+    <button class="signout-btn" onclick="handleSignOut()">Sign Out</button>
   </div>
 </header>
 
@@ -759,11 +818,7 @@
       <input type="file" id="fileInput" accept=".txt,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.epub,.rtf,.csv,.md,.html,.odt,.ods,.odp,.png,.jpg,.jpeg,.gif,.bmp,.webp,.tiff" onchange="handleFileSelect(event)" multiple/>
       <div class="drop-icon">📂</div>
       <div class="drop-title">Drop Files or Tap to Browse</div>
-      <div class="drop-sub">
-        Images · PDFs · Word · Excel · PowerPoint<br/>
-        ePub · RTF · CSV · Markdown · HTML · ODT<br/>
-        and more
-      </div>
+      <div class="drop-sub">Images · PDFs · Word · Excel · PowerPoint<br/>ePub · RTF · CSV · Markdown · HTML · ODT</div>
     </div>
 
     <div class="supported-formats">
@@ -835,6 +890,20 @@
 
   <!-- ═══ SETTINGS PANEL ═══ -->
   <div class="panel" id="panel-settings">
+
+    <!-- Account Info -->
+    <div class="settings-section">
+      <div class="settings-title">Account</div>
+      <div class="account-info">
+        <div class="account-avatar">👤</div>
+        <div>
+          <div class="account-name">TalkBridge User</div>
+          <div class="account-email" id="accountEmail">—</div>
+        </div>
+      </div>
+      <button class="btn btn-danger" onclick="handleSignOut()" style="width: calc(100% - 0px); margin-bottom: 8px;">Sign Out</button>
+    </div>
+
     <div class="settings-section">
       <div class="settings-title">Translation</div>
       <div class="setting-row">
@@ -871,26 +940,9 @@
       <div class="setting-row">
         <div>
           <div class="setting-label">Auto-Capture Mode</div>
-          <div class="setting-desc">Capture every 3 seconds automatically</div>
+          <div class="setting-desc">Capture every 4 seconds automatically</div>
         </div>
         <button class="toggle" id="toggleAutoCap" onclick="toggleAutoCaptureMode(this)"></button>
-      </div>
-    </div>
-    <div class="settings-section">
-      <div class="settings-title">Documents</div>
-      <div class="setting-row">
-        <div>
-          <div class="setting-label">OCR on Image Files</div>
-          <div class="setting-desc">Extract text from JPG, PNG, etc.</div>
-        </div>
-        <button class="toggle on" id="toggleImgOCR" onclick="this.classList.toggle('on')"></button>
-      </div>
-      <div class="setting-row">
-        <div>
-          <div class="setting-label">Preserve Formatting</div>
-          <div class="setting-desc">Keep paragraphs and line breaks</div>
-        </div>
-        <button class="toggle on" id="toggleFormatting" onclick="this.classList.toggle('on')"></button>
       </div>
     </div>
     <div class="settings-section">
@@ -906,7 +958,7 @@
     <div class="section-gap"></div>
     <div style="padding: 0 20px; text-align: center;">
       <div style="font-family: 'DM Mono', monospace; font-size: 10px; color: var(--muted); line-height: 1.8;">
-        TalkBridge v2.0 — GEEMACK Platform<br/>
+        TalkBridge v2.1 — GEEMACK Platform<br/>
         Powered by Claude AI + Tesseract OCR<br/>
         <span style="color: var(--accent);">github.com/Geem721/GEEMACK</span>
       </div>
@@ -941,9 +993,9 @@
     </div>
     <div style="padding:14px 20px; border-top:1px solid var(--border); background:var(--surface); flex-shrink:0;">
       <div style="display:flex; gap:10px;">
-        <button onclick="saveModalToDevice()" style="flex:1; padding:13px 8px; background:var(--accent); border:none; border-radius:var(--radius); color:var(--bg); font-family:'Syne',sans-serif; font-weight:700; font-size:12px; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px;">💾 Save to Device</button>
-        <button onclick="speakModalText()" style="flex:1; padding:13px 8px; background:var(--surface2); border:1px solid var(--border); border-radius:var(--radius); color:var(--text); font-family:'Syne',sans-serif; font-weight:700; font-size:12px; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px;">🔊 Listen</button>
-        <button onclick="deleteModalResult()" style="flex:none; padding:13px 16px; background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.3); border-radius:var(--radius); color:var(--danger); font-family:'Syne',sans-serif; font-weight:700; font-size:12px; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px;">🗑 Delete</button>
+        <button onclick="saveModalToDevice()" style="flex:1; padding:13px 8px; background:var(--accent); border:none; border-radius:var(--radius); color:var(--bg); font-family:'Syne',sans-serif; font-weight:700; font-size:12px; cursor:pointer;">💾 Save</button>
+        <button onclick="speakModalText()" style="flex:1; padding:13px 8px; background:var(--surface2); border:1px solid var(--border); border-radius:var(--radius); color:var(--text); font-family:'Syne',sans-serif; font-weight:700; font-size:12px; cursor:pointer;">🔊 Listen</button>
+        <button onclick="closeModal()" style="flex:none; padding:13px 16px; background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.3); border-radius:var(--radius); color:var(--danger); font-family:'Syne',sans-serif; font-weight:700; font-size:12px; cursor:pointer;">✕ Close</button>
       </div>
     </div>
   </div>
@@ -954,10 +1006,7 @@
   <div class="audio-warning-box">
     <div class="audio-warning-icon">🔇</div>
     <div class="audio-warning-title">Audio Not Available</div>
-    <div class="audio-warning-msg" id="audioWarningMsg">
-      Your browser does not support text-to-speech for this language. 
-      Audio playback may be silent or unavailable.
-    </div>
+    <div class="audio-warning-msg" id="audioWarningMsg">Your browser has limited TTS support for this language.</div>
     <div class="audio-warning-btns">
       <button class="btn-try-anyway" onclick="closeAudioWarning(true)">Try Anyway</button>
       <button class="btn-ok-got-it" onclick="closeAudioWarning(false)">OK, Got It</button>
@@ -967,29 +1016,125 @@
 
 <!-- Bottom Nav -->
 <div class="bottom-nav">
-  <button class="nav-btn active" onclick="switchTab('translate')" id="nav-translate">
-    <span class="icon">💬</span>Translate
-  </button>
-  <button class="nav-btn" onclick="switchTab('camera')" id="nav-camera">
-    <span class="icon">📷</span>Camera
-  </button>
-  <button class="nav-btn" onclick="switchTab('docs')" id="nav-docs">
-    <span class="icon">📄</span>Docs
-  </button>
-  <button class="nav-btn" onclick="switchTab('history')" id="nav-history">
-    <span class="icon">🕐</span>History
-  </button>
-  <button class="nav-btn" onclick="switchTab('settings')" id="nav-settings">
-    <span class="icon">⚙️</span>Settings
-  </button>
+  <button class="nav-btn active" onclick="switchTab('translate')" id="nav-translate"><span class="icon">💬</span>Translate</button>
+  <button class="nav-btn" onclick="switchTab('camera')" id="nav-camera"><span class="icon">📷</span>Camera</button>
+  <button class="nav-btn" onclick="switchTab('docs')" id="nav-docs"><span class="icon">📄</span>Docs</button>
+  <button class="nav-btn" onclick="switchTab('history')" id="nav-history"><span class="icon">🕐</span>History</button>
+  <button class="nav-btn" onclick="switchTab('settings')" id="nav-settings"><span class="icon">⚙️</span>Settings</button>
 </div>
+
+</div><!-- end #mainApp -->
 
 <div class="toast" id="toast"></div>
 
-<!-- Tesseract.js for OCR -->
+<!-- Tesseract.js -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/4.1.1/tesseract.min.js"></script>
 
 <script>
+// ─── AUTH UI FUNCTIONS ────────────────────────────────
+function showAuthScreen(mode) {
+  document.getElementById('authScreen').classList.add('show');
+  document.getElementById('mainApp').classList.remove('show');
+  document.getElementById('loginForm').style.display = 'none';
+  document.getElementById('signupForm').style.display = 'none';
+  document.getElementById('verifyForm').style.display = 'none';
+  if (mode === 'login') document.getElementById('loginForm').style.display = 'block';
+  else if (mode === 'signup') document.getElementById('signupForm').style.display = 'block';
+  else if (mode === 'verify') document.getElementById('verifyForm').style.display = 'block';
+}
+
+function showApp(user) {
+  document.getElementById('authScreen').classList.remove('show');
+  document.getElementById('mainApp').classList.add('show');
+  const emailEl = document.getElementById('accountEmail');
+  if (emailEl) emailEl.textContent = user.email || '—';
+}
+
+function showAuthError(id, msg) {
+  const el = document.getElementById(id);
+  el.textContent = msg; el.classList.add('show');
+}
+function clearAuthMessages() {
+  ['loginError','loginSuccess','signupError','signupSuccess','verifyError','verifySuccess']
+    .forEach(id => { const el = document.getElementById(id); if(el){el.textContent=''; el.classList.remove('show');} });
+}
+
+async function handleLogin() {
+  clearAuthMessages();
+  const email = document.getElementById('loginEmail').value.trim();
+  const password = document.getElementById('loginPassword').value;
+  if (!email || !password) { showAuthError('loginError', 'Please enter your email and password.'); return; }
+  const btn = document.getElementById('loginBtn');
+  btn.disabled = true; btn.textContent = 'Signing in…';
+  try {
+    await window._tbSignIn(email, password);
+  } catch(e) {
+    let msg = 'Sign in failed. Please try again.';
+    if (e.code === 'auth/user-not-found' || e.code === 'auth/wrong-password' || e.code === 'auth/invalid-credential') msg = 'Invalid email or password.';
+    else if (e.code === 'auth/too-many-requests') msg = 'Too many attempts. Please try again later.';
+    showAuthError('loginError', msg);
+  }
+  btn.disabled = false; btn.textContent = 'Sign In';
+}
+
+async function handleSignup() {
+  clearAuthMessages();
+  const email = document.getElementById('signupEmail').value.trim();
+  const password = document.getElementById('signupPassword').value;
+  const confirm = document.getElementById('signupConfirm').value;
+  if (!email || !password) { showAuthError('signupError', 'Please fill in all fields.'); return; }
+  if (password !== confirm) { showAuthError('signupError', 'Passwords do not match.'); return; }
+  if (password.length < 6) { showAuthError('signupError', 'Password must be at least 6 characters.'); return; }
+  const btn = document.getElementById('signupBtn');
+  btn.disabled = true; btn.textContent = 'Creating account…';
+  try {
+    const cred = await window._tbSignUp(email, password);
+    await window._tbSendVerification(cred.user);
+    showAuthScreen('verify');
+  } catch(e) {
+    let msg = 'Sign up failed. Please try again.';
+    if (e.code === 'auth/email-already-in-use') msg = 'An account with this email already exists.';
+    else if (e.code === 'auth/invalid-email') msg = 'Please enter a valid email address.';
+    showAuthError('signupError', msg);
+  }
+  btn.disabled = false; btn.textContent = 'Create Account';
+}
+
+async function handleCheckVerification() {
+  clearAuthMessages();
+  const user = window._tbAuth?.currentUser;
+  if (!user) { showAuthError('verifyError', 'No user found. Please sign in again.'); return; }
+  await user.reload();
+  if (user.emailVerified) {
+    showApp(user);
+  } else {
+    showAuthError('verifyError', 'Email not verified yet. Please check your inbox and click the verification link.');
+  }
+}
+
+async function handleResendVerification() {
+  clearAuthMessages();
+  const user = window._tbAuth?.currentUser;
+  if (!user) return;
+  try {
+    await window._tbSendVerification(user);
+    document.getElementById('verifySuccess').textContent = 'Verification email sent!';
+    document.getElementById('verifySuccess').classList.add('show');
+  } catch(e) {
+    showAuthError('verifyError', 'Could not send email. Please try again.');
+  }
+}
+
+async function handleSignOutFromVerify() {
+  await window._tbSignOut();
+  showAuthScreen('login');
+}
+
+async function handleSignOut() {
+  await window._tbSignOut();
+  showAuthScreen('login');
+}
+
 // ─── STATE ───────────────────────────────────────────
 let currentTab = 'translate';
 let mediaStream = null;
@@ -1002,10 +1147,7 @@ let currentDocText = '';
 let ocrTranslatedText = '';
 let isRecording = false;
 let recognition = null;
-let pendingSpeakText = null;
-let pendingSpeakLang = null;
 
-// ─── LANGUAGE MAP (all 26) ────────────────────────────
 const LANG_NAMES = {
   auto:'Auto-Detected', en:'English', es:'Spanish', fr:'French', de:'German',
   it:'Italian', pt:'Portuguese', zh:'Chinese', ja:'Japanese', ko:'Korean',
@@ -1015,13 +1157,8 @@ const LANG_NAMES = {
   cs:'Czech', ur:'Urdu'
 };
 
-// Languages with good browser TTS support
-const TTS_SUPPORTED = new Set(['en','es','fr','de','it','pt','zh','ja','ko','ru','nl','pl','sv','el','cs']);
-
-// Languages with limited/no browser TTS support
 const TTS_LIMITED = new Set(['ar','hi','sw','tr','vi','th','uk','id','fa','bn','ur','ko']);
 
-// Caption support map for Web Speech API
 const CAPTION_LANG_MAP = {
   en:'en-US', es:'es-ES', fr:'fr-FR', de:'de-DE', it:'it-IT',
   pt:'pt-BR', zh:'zh-CN', ja:'ja-JP', ko:'ko-KR', ar:'ar-SA',
@@ -1047,33 +1184,25 @@ function switchTab(tab) {
 // ─── TOAST ───────────────────────────────────────────
 function showToast(msg, duration=2000) {
   const t = document.getElementById('toast');
-  t.textContent = msg;
-  t.classList.add('show');
+  t.textContent = msg; t.classList.add('show');
   setTimeout(() => t.classList.remove('show'), duration);
 }
 
-// ─── AUDIO WARNING MODAL ─────────────────────────────
+// ─── AUDIO WARNING ────────────────────────────────────
 function showAudioWarning(langCode, langName, onProceed) {
-  const modal = document.getElementById('audioWarningModal');
   document.getElementById('audioWarningMsg').textContent =
-    `Your browser has limited or no text-to-speech support for ${langName}. Audio playback may be silent or incomplete depending on your device.`;
-  modal.classList.add('show');
+    `Your browser has limited or no TTS support for ${langName}. Audio may be silent.`;
+  document.getElementById('audioWarningModal').classList.add('show');
   window._audioWarningCallback = onProceed;
 }
-
 function closeAudioWarning(proceed) {
   document.getElementById('audioWarningModal').classList.remove('show');
-  if (proceed && window._audioWarningCallback) {
-    window._audioWarningCallback();
-  }
+  if (proceed && window._audioWarningCallback) window._audioWarningCallback();
   window._audioWarningCallback = null;
 }
-
-// ─── SPEAK WITH WARNING CHECK ─────────────────────────
 function speakWithCheck(text, langCode, langName) {
-  if (!window.speechSynthesis) { showToast('TTS not supported in this browser'); return; }
+  if (!window.speechSynthesis) { showToast('TTS not supported'); return; }
   if (!text || text.includes('will appear')) { showToast('Nothing to speak'); return; }
-
   const doSpeak = () => {
     speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
@@ -1081,15 +1210,11 @@ function speakWithCheck(text, langCode, langName) {
     speechSynthesis.speak(u);
     showToast('Speaking…');
   };
-
-  if (TTS_LIMITED.has(langCode)) {
-    showAudioWarning(langCode, langName || LANG_NAMES[langCode] || langCode, doSpeak);
-  } else {
-    doSpeak();
-  }
+  if (TTS_LIMITED.has(langCode)) showAudioWarning(langCode, langName || LANG_NAMES[langCode], doSpeak);
+  else doSpeak();
 }
 
-// ─── TRANSLATE VIA SECURE PROXY ──────────────────────
+// ─── TRANSLATE ────────────────────────────────────────
 async function callTranslate(text, srcLang, tgtLang) {
   const response = await fetch('/api/translate', {
     method: 'POST',
@@ -1101,10 +1226,7 @@ async function callTranslate(text, srcLang, tgtLang) {
   return data;
 }
 
-// ─── TEXT TRANSLATION ─────────────────────────────────
-function onSrcLangChange() {
-  document.getElementById('detectedLangBar').textContent = '';
-}
+function onSrcLangChange() { document.getElementById('detectedLangBar').textContent = ''; }
 
 function onTextInput() {
   const autoOn = document.getElementById('toggleAutoTranslate').classList.contains('on');
@@ -1121,40 +1243,30 @@ async function doTranslate() {
   if (!text) { showToast('Please enter text to translate'); return; }
   const srcLang = document.getElementById('srcLang').value;
   const tgtLang = document.getElementById('tgtLang').value;
-
   const btn = document.getElementById('translateBtn');
   const label = document.getElementById('translateBtnLabel');
   label.innerHTML = '<span class="spinner"></span>';
   btn.disabled = true;
-
   try {
     const result = await callTranslate(text, srcLang, tgtLang);
     lastTranslatedText = text;
-
     document.getElementById('resultBox').innerHTML =
-      `<span>${escapeHtml(result.translation)}</span><button class="copy-btn" onclick="copyResult()" title="Copy">⎘</button>`;
-
-    if (srcLang === 'auto' && result.detectedName) {
-      document.getElementById('detectedLangBar').textContent =
-        `⚡ Detected: ${result.detectedName}`;
-    }
-
+      `<span>${escapeHtml(result.translation)}</span><button class="copy-btn" onclick="copyResult()">⎘</button>`;
+    if (srcLang === 'auto' && result.detectedName)
+      document.getElementById('detectedLangBar').textContent = `⚡ Detected: ${result.detectedName}`;
     const histOn = document.getElementById('toggleHistory').classList.contains('on');
     if (histOn) {
       translationHistory.unshift({
-        id: Date.now(),
-        srcLang: result.detected || srcLang,
+        id: Date.now(), srcLang: result.detected || srcLang,
         srcName: result.detectedName || LANG_NAMES[srcLang],
         tgtLang, tgtName: LANG_NAMES[tgtLang],
-        original: text,
-        translated: result.translation,
-        time: new Date().toLocaleString(),
-        mode: 'text'
+        original: text, translated: result.translation,
+        time: new Date().toLocaleString(), mode: 'text'
       });
       if (translationHistory.length > 100) translationHistory.pop();
       localStorage.setItem('tb_history', JSON.stringify(translationHistory));
     }
-  } catch (e) {
+  } catch(e) {
     document.getElementById('resultBox').innerHTML =
       `<span style="color:var(--danger)">Error: ${e.message}</span><button class="copy-btn" onclick="copyResult()">⎘</button>`;
   }
@@ -1177,8 +1289,7 @@ function clearAll() {
 }
 
 function copyResult() {
-  const el = document.getElementById('resultBox');
-  const text = el.querySelector('span')?.textContent || '';
+  const text = document.getElementById('resultBox').querySelector('span')?.textContent || '';
   if (!text || text === 'Translation will appear here…') return;
   navigator.clipboard.writeText(text).then(() => showToast('Copied!'));
 }
@@ -1190,13 +1301,7 @@ function viewFullResult() {
   const srcLang = document.getElementById('srcLang').value;
   const tgtLang = document.getElementById('tgtLang').value;
   const detected = document.getElementById('detectedLangBar').textContent;
-  openModal({
-    title: 'Text Translation',
-    meta: (detected || (LANG_NAMES[srcLang] || srcLang)) + ' → ' + (LANG_NAMES[tgtLang] || tgtLang),
-    source: orig,
-    translation: trans,
-    tgtLang
-  });
+  openModal({ title: 'Text Translation', meta: (detected || LANG_NAMES[srcLang]) + ' → ' + LANG_NAMES[tgtLang], source: orig, translation: trans, tgtLang });
 }
 
 function speakResult() {
@@ -1205,86 +1310,44 @@ function speakResult() {
   speakWithCheck(text, tgtLang, LANG_NAMES[tgtLang]);
 }
 
-// ─── MIC / SPEECH RECOGNITION ─────────────────────────
+// ─── MIC ─────────────────────────────────────────────
 function toggleMic() {
   if (!('webkitSpeechRecognition' in window || 'SpeechRecognition' in window)) {
-    showToast('Speech recognition not supported in this browser');
-    return;
+    showToast('Speech recognition not supported'); return;
   }
   const btn = document.getElementById('micBtn');
-  if (isRecording) {
-    recognition?.stop();
-    isRecording = false;
-    btn.classList.remove('recording');
-    btn.textContent = '🎤';
-    return;
-  }
+  if (isRecording) { recognition?.stop(); isRecording = false; btn.classList.remove('recording'); btn.textContent = '🎤'; return; }
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   recognition = new SR();
   const srcLang = document.getElementById('srcLang').value;
-  const mappedLang = CAPTION_LANG_MAP[srcLang] || (srcLang === 'auto' ? 'en-US' : srcLang);
-  recognition.lang = mappedLang;
-  recognition.continuous = false;
-  recognition.interimResults = false;
-
-  recognition.onresult = (e) => {
-    const transcript = e.results[0][0].transcript;
-    document.getElementById('srcText').value = transcript;
-    doTranslate();
-  };
-  recognition.onerror = (e) => {
-    if (e.error === 'language-not-supported') {
-      showToast('⚠️ Mic not supported for this language — try English', 3500);
-    } else {
-      showToast('Mic error: ' + e.error);
-    }
-    isRecording = false;
-    btn.classList.remove('recording');
-    btn.textContent = '🎤';
-  };
-  recognition.onend = () => {
-    isRecording = false;
-    btn.classList.remove('recording');
-    btn.textContent = '🎤';
-  };
+  recognition.lang = CAPTION_LANG_MAP[srcLang] || 'en-US';
+  recognition.continuous = false; recognition.interimResults = false;
+  recognition.onresult = (e) => { document.getElementById('srcText').value = e.results[0][0].transcript; doTranslate(); };
+  recognition.onerror = (e) => { showToast('Mic error: ' + e.error); isRecording = false; btn.classList.remove('recording'); btn.textContent = '🎤'; };
+  recognition.onend = () => { isRecording = false; btn.classList.remove('recording'); btn.textContent = '🎤'; };
   recognition.start();
-  isRecording = true;
-  btn.classList.add('recording');
-  btn.textContent = '⏹';
-
-  // Warn if language has limited caption support
-  const limitedCaptionLangs = new Set(['sw','fa','bn','ur','id']);
-  if (limitedCaptionLangs.has(srcLang)) {
-    showToast('⚠️ Limited mic support for this language', 3000);
-  } else {
-    showToast('Listening…', 3000);
-  }
+  isRecording = true; btn.classList.add('recording'); btn.textContent = '⏹';
+  showToast('Listening…', 3000);
 }
 
 // ─── CAMERA OCR ───────────────────────────────────────
 async function startCamera() {
   const useBack = document.getElementById('toggleBackCam').classList.contains('on');
   try {
-    mediaStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: useBack ? 'environment' : 'user', width: { ideal: 1280 }, height: { ideal: 720 } }
-    });
+    mediaStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: useBack ? 'environment' : 'user' } });
     const video = document.getElementById('cameraFeed');
     video.srcObject = mediaStream;
     document.getElementById('cameraOverlay').style.display = 'none';
     document.getElementById('startCamBtn').style.display = 'none';
     document.getElementById('snapBtn').style.display = '';
     document.getElementById('stopCamBtn').style.display = '';
-    showToast('Camera ready — point at text and capture');
-  } catch (e) {
-    showToast('Camera access denied: ' + e.message, 3000);
-  }
+    showToast('Camera ready');
+  } catch(e) { showToast('Camera error: ' + e.message, 3000); }
 }
 
 function stopCamera() {
   mediaStream?.getTracks().forEach(t => t.stop());
-  mediaStream = null;
-  clearInterval(autoCapInterval);
-  autoCapInterval = null;
+  mediaStream = null; clearInterval(autoCapInterval); autoCapInterval = null;
   document.getElementById('cameraFeed').srcObject = null;
   document.getElementById('cameraOverlay').style.display = 'flex';
   document.getElementById('startCamBtn').style.display = '';
@@ -1295,153 +1358,73 @@ function stopCamera() {
 async function captureAndOCR() {
   const video = document.getElementById('cameraFeed');
   const canvas = document.getElementById('captureCanvas');
-  canvas.width = video.videoWidth;
-  canvas.height = video.videoHeight;
-  const ctx = canvas.getContext('2d');
-  ctx.drawImage(video, 0, 0);
-
+  canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+  canvas.getContext('2d').drawImage(video, 0, 0);
   document.getElementById('ocrOrigText').innerHTML = '<span class="spinner"></span> Extracting text…';
-  document.getElementById('ocrTransText').innerHTML = '<span class="placeholder">Waiting for OCR…</span>';
-  document.getElementById('ocrLangDetected').textContent = '';
-
+  document.getElementById('ocrTransText').innerHTML = '<span class="placeholder">Waiting…</span>';
   try {
-    const { data: { text } } = await Tesseract.recognize(canvas, 'eng+spa+fra+deu+chi_sim+jpn+kor+ara+rus', {
-      logger: m => {}
-    });
+    const { data: { text } } = await Tesseract.recognize(canvas, 'eng+spa+fra+deu+chi_sim+jpn+kor+ara+rus');
     const cleanedText = text.trim().replace(/\n{3,}/g, '\n\n');
-    if (!cleanedText) { showToast('No text detected — try again'); return; }
-
+    if (!cleanedText) { showToast('No text detected'); return; }
     document.getElementById('ocrOrigText').textContent = cleanedText;
-
     const srcLang = document.getElementById('camSrcLang').value;
     const tgtLang = document.getElementById('camTgtLang').value;
     document.getElementById('ocrTransText').innerHTML = '<span class="spinner"></span> Translating…';
-
     const result = await callTranslate(cleanedText, srcLang, tgtLang);
     document.getElementById('ocrTransText').textContent = result.translation;
     document.getElementById('ocrLangDetected').textContent = result.detectedName || '';
     ocrTranslatedText = result.translation;
-
-    const histOn = document.getElementById('toggleHistory').classList.contains('on');
-    if (histOn) {
-      translationHistory.unshift({
-        id: Date.now(), srcLang: result.detected, srcName: result.detectedName,
-        tgtLang, tgtName: LANG_NAMES[tgtLang],
-        original: cleanedText.slice(0, 200),
-        translated: result.translation.slice(0, 200),
-        time: new Date().toLocaleString(), mode: 'camera'
-      });
-      localStorage.setItem('tb_history', JSON.stringify(translationHistory));
-    }
     showToast('OCR complete!');
-  } catch (e) {
-    document.getElementById('ocrOrigText').textContent = 'OCR Error: ' + e.message;
-    document.getElementById('ocrTransText').innerHTML = '<span class="placeholder">Failed</span>';
+  } catch(e) {
+    document.getElementById('ocrOrigText').textContent = 'Error: ' + e.message;
   }
 }
 
 function viewFullOCR() {
   const orig = document.getElementById('ocrOrigText').textContent;
   const trans = document.getElementById('ocrTransText').textContent;
-  if (!orig || orig.includes('Captured text')) { showToast('Nothing to display yet'); return; }
+  if (!orig || orig.includes('Captured text')) { showToast('Nothing to display'); return; }
   const tgtLang = document.getElementById('camTgtLang').value;
-  const detected = document.getElementById('ocrLangDetected').textContent;
-  openModal({
-    title: 'Camera OCR Result',
-    meta: (detected || 'Auto-Detected') + ' → ' + (LANG_NAMES[tgtLang] || tgtLang),
-    source: orig,
-    translation: trans,
-    tgtLang
-  });
+  openModal({ title: 'Camera OCR Result', meta: 'Auto-Detected → ' + LANG_NAMES[tgtLang], source: orig, translation: trans, tgtLang });
 }
 
-let autoCaptureActive = false;
 function toggleAutoCaptureMode(btn) {
   btn.classList.toggle('on');
-  autoCaptureActive = btn.classList.contains('on');
-  if (autoCaptureActive && mediaStream) {
-    autoCapInterval = setInterval(() => {
-      if (mediaStream) captureAndOCR();
-    }, 4000);
-    showToast('Auto-capture every 4 seconds');
-  } else {
-    clearInterval(autoCapInterval);
-    autoCapInterval = null;
-  }
+  if (btn.classList.contains('on') && mediaStream) {
+    autoCapInterval = setInterval(() => { if (mediaStream) captureAndOCR(); }, 4000);
+    showToast('Auto-capture every 4s');
+  } else { clearInterval(autoCapInterval); autoCapInterval = null; }
 }
 
-// ─── DOCUMENT HANDLING ────────────────────────────────
-function handleFileDrop(event) {
-  event.preventDefault();
-  document.getElementById('dropZone').classList.remove('drag-over');
-  const files = event.dataTransfer.files;
-  if (files.length) processFile(files[0]);
-}
-
-function handleFileSelect(event) {
-  const files = event.target.files;
-  if (files.length) processFile(files[0]);
-}
+// ─── DOCUMENTS ────────────────────────────────────────
+function handleFileDrop(e) { e.preventDefault(); document.getElementById('dropZone').classList.remove('drag-over'); if (e.dataTransfer.files.length) processFile(e.dataTransfer.files[0]); }
+function handleFileSelect(e) { if (e.target.files.length) processFile(e.target.files[0]); }
 
 async function processFile(file) {
   currentDocFile = file;
   const ext = file.name.split('.').pop().toLowerCase();
   const area = document.getElementById('docPreviewArea');
-  const btn = document.getElementById('translateDocBtn');
-
   showProgress(10);
-
-  area.innerHTML = `
-    <div class="doc-preview">
-      <div class="doc-preview-header">
-        <div class="doc-icon">${getFileIcon(ext)}</div>
-        <div>
-          <div class="doc-name">${escapeHtml(file.name)}</div>
-          <div class="doc-meta">${(file.size/1024).toFixed(1)} KB · ${ext.toUpperCase()}</div>
-        </div>
-      </div>
-      <div class="doc-body" id="docPreviewBody"><span class="spinner"></span> Reading file…</div>
-    </div>`;
-
+  area.innerHTML = `<div class="doc-preview"><div class="doc-preview-header"><div class="doc-icon">${getFileIcon(ext)}</div><div><div class="doc-name">${escapeHtml(file.name)}</div><div class="doc-meta">${(file.size/1024).toFixed(1)} KB · ${ext.toUpperCase()}</div></div></div><div class="doc-body" id="docPreviewBody"><span class="spinner"></span> Reading…</div></div>`;
   document.getElementById('docActions').style.display = 'block';
-
   try {
     let text = '';
     const imageExts = ['jpg','jpeg','png','gif','bmp','webp','tiff','tif'];
-
     if (imageExts.includes(ext)) {
       showProgress(30);
-      const { data: { text: ocrText } } = await Tesseract.recognize(file, 'eng+spa+fra+deu+chi_sim', {
-        logger: m => {}
-      });
-      text = ocrText.trim();
-      showProgress(70);
-    } else {
-      text = await readFileAsText(file);
-      showProgress(60);
-    }
-
+      const { data: { text: ocrText } } = await Tesseract.recognize(file, 'eng+spa+fra+deu+chi_sim');
+      text = ocrText.trim(); showProgress(70);
+    } else { text = await readFileAsText(file); showProgress(60); }
     currentDocText = text;
-    const preview = text.slice(0, 800) + (text.length > 800 ? '\n\n…(truncated for preview)' : '');
-    document.getElementById('docPreviewBody').textContent = preview || '[No readable text found]';
-    showProgress(100);
-    setTimeout(() => hideProgress(), 500);
-
-    btn.style.display = 'block';
-    showToast('File loaded — ready to translate');
-  } catch (e) {
-    document.getElementById('docPreviewBody').textContent = 'Error reading file: ' + e.message;
-    hideProgress();
-  }
+    document.getElementById('docPreviewBody').textContent = text.slice(0, 800) + (text.length > 800 ? '\n\n…(truncated)' : '') || '[No readable text]';
+    showProgress(100); setTimeout(() => hideProgress(), 500);
+    document.getElementById('translateDocBtn').style.display = 'block';
+    showToast('File loaded');
+  } catch(e) { document.getElementById('docPreviewBody').textContent = 'Error: ' + e.message; hideProgress(); }
 }
 
 async function readFileAsText(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = e => resolve(e.target.result);
-    reader.onerror = reject;
-    reader.readAsText(file, 'UTF-8');
-  });
+  return new Promise((res, rej) => { const r = new FileReader(); r.onload = e => res(e.target.result); r.onerror = rej; r.readAsText(file, 'UTF-8'); });
 }
 
 async function translateDocument() {
@@ -1449,213 +1432,86 @@ async function translateDocument() {
   const srcLang = document.getElementById('docSrcLang').value;
   const tgtLang = document.getElementById('docTgtLang').value;
   const btn = document.getElementById('translateDocBtn');
-  btn.innerHTML = '<span class="spinner"></span> Translating…';
-  btn.disabled = true;
-  showProgress(20);
-
+  btn.innerHTML = '<span class="spinner"></span> Translating…'; btn.disabled = true; showProgress(20);
   try {
     const chunks = chunkText(currentDocText, 3000);
-    let translatedChunks = [];
+    let translated = [];
     for (let i = 0; i < chunks.length; i++) {
       showProgress(20 + Math.round((i / chunks.length) * 70));
       const result = await callTranslate(chunks[i], srcLang, tgtLang);
-      translatedChunks.push(result.translation);
-      if (i === 0 && result.detectedName) {
-        document.getElementById('docSrcLang').value !== 'auto' ||
-        showToast('Detected: ' + result.detectedName);
-      }
+      translated.push(result.translation);
     }
-    const fullTranslation = translatedChunks.join('\n\n');
-    showProgress(100);
-    setTimeout(() => hideProgress(), 500);
-
-    const resultArea = document.getElementById('docResultArea');
-    resultArea.innerHTML = `
-      <div class="doc-preview" style="margin: 0 20px 12px; border-left: 3px solid var(--accent);">
-        <div class="doc-preview-header">
-          <div class="doc-icon">✅</div>
-          <div>
-            <div class="doc-name">Translation Complete</div>
-            <div class="doc-meta">${chunks.length} chunk(s) · ${LANG_NAMES[tgtLang]}</div>
-          </div>
-        </div>
-        <div class="doc-body">${escapeHtml(fullTranslation.slice(0, 600))}${fullTranslation.length > 600 ? '\n…' : ''}</div>
-      </div>
-      <div style="padding: 0 20px 16px;">
-        <button class="btn btn-primary" onclick="viewFullDocTranslation()" style="width:100%;">
-          ⛶ View Full Translation
-        </button>
-      </div>`;
-
-    window._lastDocTranslation = fullTranslation;
-    window._lastDocName = currentDocFile?.name || 'document';
+    const full = translated.join('\n\n');
+    showProgress(100); setTimeout(() => hideProgress(), 500);
+    document.getElementById('docResultArea').innerHTML = `<div class="doc-preview" style="margin:0 20px 12px; border-left:3px solid var(--accent);"><div class="doc-preview-header"><div class="doc-icon">✅</div><div><div class="doc-name">Translation Complete</div><div class="doc-meta">${chunks.length} chunk(s) · ${LANG_NAMES[tgtLang]}</div></div></div><div class="doc-body">${escapeHtml(full.slice(0,600))}${full.length>600?'\n…':''}</div></div><div style="padding:0 20px 16px;"><button class="btn btn-primary" onclick="viewFullDocTranslation()" style="width:100%;">⛶ View Full Translation</button></div>`;
+    window._lastDocTranslation = full;
+    window._lastDocName = currentDocFile?.name;
     showToast('Translation complete!');
-  } catch (e) {
-    showToast('Error: ' + e.message, 3000);
-    hideProgress();
-  }
-  btn.textContent = '⚡ Translate Document';
-  btn.disabled = false;
+  } catch(e) { showToast('Error: ' + e.message, 3000); hideProgress(); }
+  btn.textContent = '⚡ Translate Document'; btn.disabled = false;
 }
 
 function viewFullDocTranslation() {
-  const text = window._lastDocTranslation;
-  if (!text) { showToast('Nothing to display'); return; }
+  if (!window._lastDocTranslation) { showToast('Nothing to display'); return; }
   const tgtLang = document.getElementById('docTgtLang').value;
-  openModal({
-    title: 'Document Translation',
-    meta: (window._lastDocName || 'document') + ' → ' + (LANG_NAMES[tgtLang] || tgtLang),
-    source: null,
-    translation: text,
-    tgtLang
-  });
+  openModal({ title: 'Document Translation', meta: (window._lastDocName || 'document') + ' → ' + LANG_NAMES[tgtLang], source: null, translation: window._lastDocTranslation, tgtLang });
 }
 
-// ─── MODAL FUNCTIONS ─────────────────────────────────
+// ─── MODAL ────────────────────────────────────────────
 function openModal({ title, meta, source, translation, tgtLang }) {
   document.getElementById('modalTitle').textContent = title;
   document.getElementById('modalMeta').textContent = meta || '';
   const srcBlock = document.getElementById('modalSourceBlock');
-  if (source) {
-    srcBlock.style.display = 'block';
-    document.getElementById('modalSourceText').textContent = source;
-  } else {
-    srcBlock.style.display = 'none';
-  }
+  if (source) { srcBlock.style.display = 'block'; document.getElementById('modalSourceText').textContent = source; }
+  else { srcBlock.style.display = 'none'; }
   document.getElementById('modalTransText').textContent = translation;
   document.getElementById('resultModal').style.display = 'block';
   document.body.style.overflow = 'hidden';
-  window._modalTgtLang = tgtLang;
-  window._modalTransText = translation;
+  window._modalTgtLang = tgtLang; window._modalTransText = translation;
 }
-
-function closeModal() {
-  document.getElementById('resultModal').style.display = 'none';
-  document.body.style.overflow = '';
-}
-
-function copyModalText() {
-  const text = window._modalTransText || '';
-  navigator.clipboard.writeText(text).then(() => showToast('Copied!'));
-}
-
+function closeModal() { document.getElementById('resultModal').style.display = 'none'; document.body.style.overflow = ''; }
+function copyModalText() { navigator.clipboard.writeText(window._modalTransText||'').then(()=>showToast('Copied!')); }
+function speakModalText() { speakWithCheck(window._modalTransText||'', window._modalTgtLang||'en', LANG_NAMES[window._modalTgtLang]); }
 function saveModalToDevice() {
   const text = window._modalTransText || '';
-  const title = document.getElementById('modalTitle').textContent || 'translation';
-  const meta = document.getElementById('modalMeta').textContent || '';
-  const source = document.getElementById('modalSourceText').textContent || '';
   if (!text) { showToast('Nothing to save'); return; }
-  const content = [
-    'TalkBridge — ' + title,
-    '─'.repeat(40),
-    meta,
-    '',
-    source ? 'ORIGINAL:\n' + source + '\n\nTRANSLATION:\n' + text : text,
-    '',
-    'Saved: ' + new Date().toLocaleString()
-  ].join('\n');
-  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
   const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = 'talkbridge_' + Date.now() + '.txt';
-  a.click();
-  URL.revokeObjectURL(url);
-  showToast('Saved to device!');
+  const a = document.createElement('a'); a.href = url; a.download = 'talkbridge_' + Date.now() + '.txt'; a.click();
+  URL.revokeObjectURL(url); showToast('Saved!');
 }
-
-function deleteModalResult() {
-  if (!confirm('Delete this translation? This cannot be undone.')) return;
-  document.getElementById('modalSourceText').textContent = '';
-  document.getElementById('modalTransText').textContent = '';
-  window._modalTransText = '';
-  window._lastDocTranslation = '';
-  closeModal();
-  showToast('Translation deleted');
-}
-
-function speakModalText() {
-  const text = window._modalTransText || '';
-  const tgtLang = window._modalTgtLang || 'en';
-  speakWithCheck(text, tgtLang, LANG_NAMES[tgtLang]);
-}
-
-document.getElementById('resultModal').addEventListener('click', function(e) {
-  if (e.target === this) closeModal();
-});
-
-function chunkText(text, size) {
-  const chunks = [];
-  let i = 0;
-  while (i < text.length) {
-    let end = i + size;
-    if (end < text.length) {
-      const brk = text.lastIndexOf('\n\n', end);
-      if (brk > i + size/2) end = brk;
-    }
-    chunks.push(text.slice(i, end).trim());
-    i = end;
-  }
-  return chunks.filter(Boolean);
-}
+document.getElementById('resultModal').addEventListener('click', function(e) { if (e.target === this) closeModal(); });
 
 // ─── HISTORY ─────────────────────────────────────────
 function renderHistory() {
   const list = document.getElementById('historyList');
-  if (!translationHistory.length) {
-    list.innerHTML = '<div class="history-empty">No translations yet.<br/>Start translating to build your history.</div>';
-    return;
-  }
+  if (!translationHistory.length) { list.innerHTML = '<div class="history-empty">No translations yet.</div>'; return; }
   list.innerHTML = translationHistory.map(item => `
     <div class="history-item">
-      <div class="history-langs">
-        <span>${item.srcName || item.srcLang}</span>
-        <span>→</span>
-        <span>${item.tgtName || item.tgtLang}</span>
-        <span style="margin-left:auto;">${item.mode === 'camera' ? '📷' : item.mode === 'doc' ? '📄' : '💬'}</span>
-      </div>
-      <div class="history-original">${escapeHtml((item.original || '').slice(0,120))}</div>
-      <div class="history-translated">${escapeHtml((item.translated || '').slice(0,120))}</div>
+      <div class="history-langs"><span>${item.srcName||item.srcLang}</span><span>→</span><span>${item.tgtName||item.tgtLang}</span><span style="margin-left:auto;">${item.mode==='camera'?'📷':item.mode==='doc'?'📄':'💬'}</span></div>
+      <div class="history-original">${escapeHtml((item.original||'').slice(0,120))}</div>
+      <div class="history-translated">${escapeHtml((item.translated||'').slice(0,120))}</div>
       <div class="history-time">${item.time}</div>
-    </div>
-  `).join('');
+    </div>`).join('');
 }
 
 function clearHistory() {
-  if (!confirm('Clear all translation history?')) return;
-  translationHistory = [];
-  localStorage.removeItem('tb_history');
-  renderHistory();
-  showToast('History cleared');
+  if (!confirm('Clear all history?')) return;
+  translationHistory = []; localStorage.removeItem('tb_history'); renderHistory(); showToast('History cleared');
 }
 
 // ─── UTILS ───────────────────────────────────────────
-function copyOCRInline() {
-  if (!ocrTranslatedText) { showToast('Nothing to copy'); return; }
-  navigator.clipboard.writeText(ocrTranslatedText).then(() => showToast('Copied!'));
+function copyOCRInline() { if (!ocrTranslatedText) { showToast('Nothing to copy'); return; } navigator.clipboard.writeText(ocrTranslatedText).then(()=>showToast('Copied!')); }
+function escapeHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function getFileIcon(ext) { return ({pdf:'📕',doc:'📝',docx:'📝',xls:'📊',xlsx:'📊',ppt:'📊',pptx:'📊',txt:'📄',md:'📄',epub:'📚',rtf:'📄',csv:'📊',html:'🌐',jpg:'🖼️',jpeg:'🖼️',png:'🖼️'})[ext]||'📄'; }
+function showProgress(pct) { document.getElementById('progressWrap').style.display='block'; document.getElementById('progressBar').style.width=pct+'%'; }
+function hideProgress() { document.getElementById('progressWrap').style.display='none'; document.getElementById('progressBar').style.width='0%'; }
+function chunkText(text, size) {
+  const chunks=[]; let i=0;
+  while(i<text.length){let end=i+size; if(end<text.length){const brk=text.lastIndexOf('\n\n',end); if(brk>i+size/2)end=brk;} chunks.push(text.slice(i,end).trim()); i=end;}
+  return chunks.filter(Boolean);
 }
 
-function escapeHtml(s) {
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-}
-
-function getFileIcon(ext) {
-  const map = { pdf:'📕', doc:'📝', docx:'📝', xls:'📊', xlsx:'📊', ppt:'📊', pptx:'📊',
-    txt:'📄', md:'📄', epub:'📚', rtf:'📄', csv:'📊', html:'🌐', odt:'📝',
-    jpg:'🖼️', jpeg:'🖼️', png:'🖼️', gif:'🖼️', bmp:'🖼️', webp:'🖼️' };
-  return map[ext] || '📄';
-}
-
-function showProgress(pct) {
-  document.getElementById('progressWrap').style.display = 'block';
-  document.getElementById('progressBar').style.width = pct + '%';
-}
-function hideProgress() {
-  document.getElementById('progressWrap').style.display = 'none';
-  document.getElementById('progressBar').style.width = '0%';
-}
-
-// Init
 renderHistory();
 </script>
 </body>
