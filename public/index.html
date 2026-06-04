@@ -41,12 +41,8 @@
   window._tbSignOut = () => signOut(auth);
   window._tbSendVerification = (user) => sendEmailVerification(user);
 
-  onAuthStateChanged(auth, (user) => {
-    if (user) {
-      if (!user.emailVerified) { showAuthScreen('verify'); }
-      else { showApp(user); }
-    } else { showAuthScreen('login'); }
-  });
+  window._tbOnAuthStateChanged = (callback) => window._tbOnAuthStateChanges = (callback) => onAuthStateChanged(auth, callback);
+}};
 </script>
 
 <style>
@@ -959,6 +955,8 @@ function getFileIcon(ext){return({pdf:'📕',doc:'📝',docx:'📝',xls:'📊',x
 function showProgress(pct){document.getElementById('progressWrap').style.display='block';document.getElementById('progressBar').style.width=pct+'%';}
 function hideProgress(){document.getElementById('progressWrap').style.display='none';document.getElementById('progressBar').style.width='0%';}
 function chunkText(text,size){const chunks=[];let i=0;while(i<text.length){let end=i+size;if(end<text.length){const brk=text.lastIndexOf('\n\n',end);if(brk>i+size/2)end=brk;}chunks.push(text.slice(i,end).trim());i=end;}return chunks.filter(Boolean);}
+
+window._tbOnAuthStateChanged((user) => { if(user){if(!user.emailVerified){showAuthScreen('verify');}else{showApp(user);}}else{showAuthScreen('login');}});
 
 renderHistory();
 </script>
