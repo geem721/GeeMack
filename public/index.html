@@ -41,8 +41,8 @@
   window._tbSignOut = () => signOut(auth);
   window._tbSendVerification = (user) => sendEmailVerification(user);
 
-  window._tbOnAuthStateChanged = (callback) => window._tbOnAuthStateChanges = (callback) => onAuthStateChanged(auth, callback);
-}};
+  window._tbOnAuthStateChanged = (callback) => onAuthStateChanged(auth, callback);
+});
 </script>
 
 <style>
@@ -956,8 +956,7 @@ function showProgress(pct){document.getElementById('progressWrap').style.display
 function hideProgress(){document.getElementById('progressWrap').style.display='none';document.getElementById('progressBar').style.width='0%';}
 function chunkText(text,size){const chunks=[];let i=0;while(i<text.length){let end=i+size;if(end<text.length){const brk=text.lastIndexOf('\n\n',end);if(brk>i+size/2)end=brk;}chunks.push(text.slice(i,end).trim());i=end;}return chunks.filter(Boolean);}
 
-window._tbOnAuthStateChanged((user) => { if(user){if(!user.emailVerified){showAuthScreen('verify');}else{showApp(user);}}else{showAuthScreen('login');}});
-
+setTimeout(()=>{if(window._tbOnAuthStateChanged)window._tbOnAuthStateChanged((user)=>{if(user){if(!user.emailVerified){showAuthScreen('verify');}else{showApp(user);}}else{showAuthScreen('login');}});},800);
 renderHistory();
 </script>
 </body>
