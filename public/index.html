@@ -1049,7 +1049,6 @@ function clearGroupChat(){
     document.querySelectorAll('.gc-room-btn').forEach(b=>b.classList.toggle('active',b.textContent==='#'+room));
   }
 })();
-}
 
 function clearGroupChat(){
   if(!confirm('Clear chat from your view? (Messages stay in the room for others)'))return;
