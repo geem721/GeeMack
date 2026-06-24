@@ -223,6 +223,13 @@
   .gc-msg-bubble { padding: 9px 13px; border-radius: 12px; font-family: 'DM Mono', monospace; font-size: 13px; line-height: 1.5; background: var(--surface2); border: 1px solid var(--border); white-space: pre-wrap; word-break: break-word; }
   .gc-msg-own .gc-msg-bubble { background: rgba(0,229,255,0.1); border-color: rgba(0,229,255,0.3); }
   .gc-msg-translated { font-size: 11px; color: var(--accent); font-family: 'DM Mono', monospace; padding: 3px 4px 0; font-style: italic; }
+  .gc-system-msg { text-align:center; font-family:"DM Mono",monospace; font-size:11px; color:var(--accent3); padding:4px 0; opacity:0.8; }
+  .gc-invite-modal { display:none; position:fixed; inset:0; z-index:600; background:rgba(0,0,0,0.6); align-items:center; justify-content:center; }
+  .gc-invite-modal.show { display:flex; }
+  .gc-invite-box { background:var(--surface); border:1px solid var(--border); border-radius:20px; padding:28px 24px; width:100%; max-width:420px; }
+  .gc-presence-popover { display:none; position:absolute; top:36px; right:0; background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:10px 14px; min-width:200px; z-index:100; font-family:"DM Mono",monospace; font-size:12px; }
+  .gc-presence-popover.show { display:block; }
+  .gc-presence-wrap { position:relative; }
 
   .section-gap { height: 16px; }
   .divider { height: 1px; background: var(--border); margin: 12px 20px; }
@@ -458,6 +465,19 @@
   </div>
 
   <!-- GROUP CHAT PANEL — FULLY REWRITTEN -->
+  <!-- INVITE MODAL -->
+  <div class="gc-invite-modal" id="gcInviteModal" onclick="if(event.target===this)closeInviteModal()">
+    <div class="gc-invite-box">
+      <div style="font-size:16px;font-weight:800;margin-bottom:6px;">Invite to <span id="gcInviteRoomName">#general</span></div>
+      <div style="font-family:'DM Mono',monospace;font-size:11px;color:var(--muted);margin-bottom:16px;">Share this link — anyone with it can join the room</div>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <input id="gcInviteLink" readonly style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-family:'DM Mono',monospace;font-size:12px;outline:none;" />
+        <button onclick="copyInviteLink()" class="btn btn-primary" style="flex:none;padding:10px 16px;font-size:12px;">Copy</button>
+      </div>
+      <button onclick="closeInviteModal()" style="margin-top:16px;width:100%;padding:10px;background:transparent;border:1px solid var(--border);border-radius:8px;color:var(--muted);font-family:'Syne',sans-serif;font-size:12px;font-weight:700;cursor:pointer;">Close</button>
+    </div>
+  </div>
+
   <div class="panel" id="panel-groupchat">
     <div style="padding:14px 20px 8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
       <span style="font-size:11px;font-weight:700;letter-spacing:1px;color:var(--muted);text-transform:uppercase;">Room:</span>
@@ -468,8 +488,17 @@
         <button class="gc-room-btn" onclick="switchRoom('business')">#business</button>
         <button class="gc-room-btn" onclick="switchRoom('casual')">#casual</button>
       </div>
-      <!-- FIXED: Clear button -->
-      <button onclick="clearGroupChat()" style="margin-left:auto;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);color:var(--danger);border-radius:8px;padding:6px 12px;font-family:'Syne',sans-serif;font-size:11px;font-weight:700;cursor:pointer;">🗑 Clear View</button>
+      <div style="margin-left:auto;display:flex;gap:6px;align-items:center;">
+        <div class="gc-presence-wrap">
+          <button id="gcPresenceBtn" onclick="togglePresencePopover()" style="background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.3);color:var(--accent3);border-radius:8px;padding:6px 12px;font-family:'Syne',sans-serif;font-size:11px;font-weight:700;cursor:pointer;">👥 <span id="gcOnlineCount">0</span> online</button>
+          <div class="gc-presence-popover" id="gcPresencePopover">
+            <div style="font-weight:700;margin-bottom:8px;color:var(--text);">Online now</div>
+            <div id="gcPresenceList" style="display:flex;flex-direction:column;gap:6px;"></div>
+          </div>
+        </div>
+        <button onclick="openInviteModal()" style="background:rgba(0,229,255,0.08);border:1px solid rgba(0,229,255,0.3);color:var(--accent);border-radius:8px;padding:6px 12px;font-family:'Syne',sans-serif;font-size:11px;font-weight:700;cursor:pointer;">✉️ Invite</button>
+        <button onclick="clearGroupChat()" style="background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);color:var(--danger);border-radius:8px;padding:6px 12px;font-family:'Syne',sans-serif;font-size:11px;font-weight:700;cursor:pointer;">🗑 Clear</button>
+      </div>
     </div>
     <div class="lang-bar" style="padding-top:4px;padding-bottom:4px;">
       <select class="lang-sel" id="gcSrcLang">
@@ -856,18 +885,67 @@ function renderHistory(){
 }
 function clearHistory(){if(!confirm('Clear all history?'))return;translationHistory=[];localStorage.removeItem('tb_history');renderHistory();showToast('History cleared');}
 
-// GROUP CHAT — COMPLETELY REWRITTEN
-// KEY FIXES:
-// 1. Incremental rendering — only new messages get rendered, no full re-render on every Firebase update
-// 2. Translations happen ASYNC after render — no blocking, no flooding the API
-// 3. Translation cache keyed by message ID + target language
-// 4. Timestamps on all messages
-// 5. Clear view button
+// GROUP CHAT
 let gcCurrentRoom='general';
 let gcListenerRef=null;
+let gcPresenceRef=null;
 let gcTranslationCache={};
 let gcRenderedIds=new Set();
 
+// ── INVITE ──────────────────────────────────────────────
+function openInviteModal(){
+  const base=window.location.origin+window.location.pathname;
+  const link=base+'?room='+gcCurrentRoom+'&invite=1';
+  document.getElementById('gcInviteLink').value=link;
+  document.getElementById('gcInviteRoomName').textContent='#'+gcCurrentRoom;
+  document.getElementById('gcInviteModal').classList.add('show');
+}
+function closeInviteModal(){document.getElementById('gcInviteModal').classList.remove('show');}
+function copyInviteLink(){
+  const input=document.getElementById('gcInviteLink');
+  navigator.clipboard.writeText(input.value).then(()=>showToast('Invite link copied! Send it to anyone.',3000));
+}
+
+// ── PRESENCE ─────────────────────────────────────────────
+function startPresence(room){
+  const currentUser=window._tbAuth?.currentUser;
+  const db=window._tbDb;
+  if(!currentUser||!db)return;
+  const myRef=window._tbRef(db,'chats/'+room+'/presence/'+currentUser.uid);
+  import('https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js').then(({set,onDisconnect})=>{
+    set(myRef,{email:currentUser.email,online:true,lastSeen:window._tbServerTimestamp()});
+    onDisconnect(myRef).update({online:false,lastSeen:window._tbServerTimestamp()});
+  });
+  if(gcPresenceRef)window._tbOff(gcPresenceRef);
+  const presRef=window._tbRef(db,'chats/'+room+'/presence');
+  gcPresenceRef=presRef;
+  window._tbOnValue(presRef,(snap)=>{
+    const data=snap.val()||{};
+    const online=Object.values(data).filter(u=>u.online);
+    document.getElementById('gcOnlineCount').textContent=online.length;
+    const list=document.getElementById('gcPresenceList');
+    list.innerHTML=online.map(u=>'<div style="display:flex;align-items:center;gap:8px;"><span style="width:8px;height:8px;border-radius:50%;background:var(--accent3);display:inline-block;"></span><span style="color:var(--text);">'+escapeHtml(u.email||'Unknown')+'</span></div>').join('');
+  });
+}
+function togglePresencePopover(){document.getElementById('gcPresencePopover').classList.toggle('show');}
+document.addEventListener('click',e=>{
+  const btn=document.getElementById('gcPresenceBtn');
+  const pop=document.getElementById('gcPresencePopover');
+  if(pop&&btn&&!btn.contains(e.target)&&!pop.contains(e.target))pop.classList.remove('show');
+});
+
+// ── JOIN EVENT ───────────────────────────────────────────
+async function writeJoinEvent(room){
+  const currentUser=window._tbAuth?.currentUser;
+  const db=window._tbDb;
+  if(!currentUser||!db)return;
+  try{
+    const msgsRef=window._tbRef(db,'chats/'+room+'/messages');
+    await window._tbPush(msgsRef,{type:'join',uid:currentUser.uid,email:currentUser.email,timestamp:window._tbServerTimestamp()});
+  }catch(e){console.warn('Join event failed:',e);}
+}
+
+// ── ROOM SWITCHING ───────────────────────────────────────
 function switchRoom(room){
   gcCurrentRoom=room;
   gcRenderedIds.clear();
@@ -878,6 +956,7 @@ function switchRoom(room){
 
 function listenToRoom(room){
   if(gcListenerRef){window._tbOff(gcListenerRef);gcListenerRef=null;}
+  if(gcPresenceRef){window._tbOff(gcPresenceRef);gcPresenceRef=null;}
   gcRenderedIds.clear();
   const feed=document.getElementById('gcMessageFeed');
   feed.innerHTML='<div style="text-align:center;color:var(--muted);font-family:\'DM Mono\',monospace;font-size:11px;margin:auto;">Loading…</div>';
@@ -900,9 +979,19 @@ function listenToRoom(room){
     newMessages.forEach(msg=>{gcRenderedIds.add(msg.id);renderMessage(msg,feed);});
     feed.scrollTop=feed.scrollHeight;
   });
+  startPresence(room);
+  writeJoinEvent(room);
 }
 
+// ── RENDER MESSAGE ───────────────────────────────────────
 function renderMessage(msg,feed){
+  if(msg.type==='join'){
+    const div=document.createElement('div');
+    div.className='gc-system-msg';
+    div.textContent='🟢 '+(msg.email||'Someone')+' joined #'+gcCurrentRoom;
+    feed.appendChild(div);
+    return;
+  }
   const currentUser=window._tbAuth?.currentUser;
   const isOwn=currentUser&&msg.uid===currentUser.uid;
   const tgtLang=document.getElementById('gcTgtLang').value;
@@ -928,6 +1017,7 @@ function renderMessage(msg,feed){
   }
 }
 
+// ── SEND MESSAGE ─────────────────────────────────────────
 async function sendGroupMessage(){
   const input=document.getElementById('gcInput'),text=input.value.trim();if(!text)return;
   const currentUser=window._tbAuth?.currentUser;if(!currentUser){showToast('Please sign in to chat');return;}
@@ -938,6 +1028,27 @@ async function sendGroupMessage(){
     const msgsRef=window._tbRef(db,'chats/'+gcCurrentRoom+'/messages');
     await window._tbPush(msgsRef,{text,uid:currentUser.uid,email:currentUser.email,lang:srcLang,timestamp:window._tbServerTimestamp()});
   }catch(e){showToast('Send failed: '+e.message,3000);input.value=text;}
+}
+
+// ── CLEAR VIEW ───────────────────────────────────────────
+function clearGroupChat(){
+  if(!confirm('Clear chat from your view? (Messages stay in the room for others)'))return;
+  gcRenderedIds.clear();gcTranslationCache={};
+  const feed=document.getElementById('gcMessageFeed');
+  feed.innerHTML='<div style="text-align:center;color:var(--muted);font-family:\'DM Mono\',monospace;font-size:11px;margin:auto;">Reloading…</div>';
+  setTimeout(()=>listenToRoom(gcCurrentRoom),800);
+  showToast('View cleared');
+}
+
+// ── URL PARAM: auto-join room from invite link ────────────
+(function(){
+  const params=new URLSearchParams(window.location.search);
+  const room=params.get('room');
+  if(room&&['general','support','travel','business','casual'].includes(room)){
+    gcCurrentRoom=room;
+    document.querySelectorAll('.gc-room-btn').forEach(b=>b.classList.toggle('active',b.textContent==='#'+room));
+  }
+})();
 }
 
 function clearGroupChat(){
