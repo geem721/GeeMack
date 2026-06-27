@@ -69,3 +69,25 @@ app.post('/api/translate', async (req, res) => {
 
 const PORT = 3000;
 app.listen(PORT, () => console.log(`TalkBridge server running on port ${PORT}`));
+
+import { AccessToken } from 'livekit-server-sdk';
+
+app.post('/api/livekit-token', async (req, res) => {
+  const { roomName, participantName } = req.body;
+  if (!roomName || !participantName) {
+    return res.status(400).json({ error: 'roomName and participantName are required' });
+  }
+  try {
+    const at = new AccessToken(
+      process.env.LIVEKIT_API_KEY,
+      process.env.LIVEKIT_API_SECRET,
+      { identity: participantName }
+    );
+    at.addGrant({ roomJoin: true, room: roomName, canPublish: true, canSubscribe: true });
+    const token = await at.toJwt();
+    return res.json({ token, url: process.env.LIVEKIT_URL });
+  } catch (err) {
+    console.error('LiveKit token error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});

@@ -1,7 +1,10 @@
 {
   "type": "module",
   "dependencies": {
-    "express": "^5.2.1"
+    "@livekit/components-react": "^2.9.21",
+    "express": "^5.2.1",
+    "livekit-client": "^2.20.0",
+    "livekit-server-sdk": "^2.15.5"
   },
   "scripts": {
     "start": "node server.js"

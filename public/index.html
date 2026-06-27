@@ -237,6 +237,7 @@
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 </style>
+<script src="https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.min.js"></script>
 </head>
 <body>
 
@@ -523,6 +524,12 @@
         <option value="pl">🇵🇱 Polish</option><option value="uk">🇺🇦 Ukrainian</option>
       </select>
       <span style="color:var(--muted);font-size:12px;flex-shrink:0;">show me</span>
+    </div>
+    <div id="videoCallArea" style="display:none;margin:0 20px 10px;border-radius:var(--radius);overflow:hidden;background:#000;position:relative;">
+      <div id="videoGrid" style="display:flex;flex-wrap:wrap;gap:4px;padding:4px;min-height:200px;"></div>
+      <div style="position:absolute;bottom:8px;left:50%;transform:translateX(-50%);display:flex;gap:8px;">
+        <button onclick="leaveVideoCall()" style="background:rgba(220,50,50,0.9);border:none;border-radius:20px;color:#fff;padding:8px 18px;font-size:13px;font-weight:700;cursor:pointer;">Leave</button>
+      </div>
     </div>
     <div id="gcMessageFeed" style="margin:0 20px 10px;height:360px;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px;display:flex;flex-direction:column;gap:10px;">
       <div style="text-align:center;color:var(--muted);font-family:'DM Mono',monospace;font-size:11px;margin:auto;">👥 Join the conversation</div>
@@ -1068,6 +1075,115 @@ function chunkText(text,size){const chunks=[];let i=0;while(i<text.length){let e
 
 setTimeout(()=>{if(window._tbOnAuthStateChanged)window._tbOnAuthStateChanged((user)=>{if(user){if(!user.emailVerified){showAuthScreen('verify');}else{showApp(user);}}else{showAuthScreen('login');}});},800);
 renderHistory();
+
+// ── LIVEKIT VIDEO CHAT ───────────────────────────────────
+let livekitRoom = null;
+let videoActive = false;
+
+async function toggleVideoCall() {
+  if (videoActive) {
+    leaveVideoCall();
+  } else {
+    joinVideoCall();
+  }
+}
+
+async function joinVideoCall() {
+  if (!currentUser) { showToast('Please sign in first'); return; }
+  const btn = document.getElementById('videoCallBtn');
+  btn.textContent = '⏳';
+  btn.style.borderColor = 'var(--accent)';
+
+  try {
+    // Get token from our backend
+    const res = await fetch('/api/livekit-token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        roomName: gcCurrentRoom,
+        participantName: currentUser.email || currentUser.uid
+      })
+    });
+    const { token, url } = await res.json();
+
+    // Connect to LiveKit
+    const { Room, RoomEvent, createLocalVideoTrack, createLocalAudioTrack } = window.LivekitClient;
+    livekitRoom = new Room({ adaptiveStream: true, dynacast: true });
+
+    livekitRoom.on(RoomEvent.TrackSubscribed, (track, pub, participant) => {
+      attachTrack(track, participant.identity);
+    });
+    livekitRoom.on(RoomEvent.TrackUnsubscribed, (track, pub, participant) => {
+      const el = document.getElementById('video-' + participant.identity);
+      if (el) el.remove();
+    });
+    livekitRoom.on(RoomEvent.ParticipantDisconnected, (participant) => {
+      const el = document.getElementById('video-' + participant.identity);
+      if (el) el.remove();
+    });
+
+    await livekitRoom.connect(url, token);
+
+    // Publish local tracks
+    const videoTrack = await createLocalVideoTrack({ facingMode: 'user' });
+    const audioTrack = await createLocalAudioTrack();
+    await livekitRoom.localParticipant.publishTrack(videoTrack);
+    await livekitRoom.localParticipant.publishTrack(audioTrack);
+
+    // Show local video
+    attachTrack(videoTrack, 'You (local)', true);
+
+    document.getElementById('videoCallArea').style.display = 'block';
+    btn.textContent = '🔴';
+    btn.style.borderColor = '#dc3232';
+    btn.style.color = '#dc3232';
+    videoActive = true;
+    showToast('Video call started!');
+
+  } catch (e) {
+    console.error('Video error:', e);
+    showToast('Could not start video: ' + e.message);
+    document.getElementById('videoCallBtn').textContent = '📹';
+    document.getElementById('videoCallBtn').style.borderColor = 'var(--border)';
+    document.getElementById('videoCallBtn').style.color = 'var(--muted)';
+  }
+}
+
+function attachTrack(track, identity, isLocal = false) {
+  const grid = document.getElementById('videoGrid');
+  let wrapper = document.getElementById('video-' + identity);
+  if (!wrapper) {
+    wrapper = document.createElement('div');
+    wrapper.id = 'video-' + identity;
+    wrapper.style.cssText = 'position:relative;flex:1;min-width:180px;max-width:320px;background:#111;border-radius:8px;overflow:hidden;';
+    const label = document.createElement('div');
+    label.style.cssText = 'position:absolute;bottom:6px;left:8px;color:#fff;font-size:11px;font-family:"DM Mono",monospace;background:rgba(0,0,0,0.6);padding:2px 6px;border-radius:4px;z-index:2;';
+    label.textContent = identity;
+    wrapper.appendChild(label);
+    grid.appendChild(wrapper);
+  }
+  if (track.kind === 'video') {
+    const el = track.attach();
+    el.style.cssText = 'width:100%;height:180px;object-fit:cover;display:block;';
+    el.muted = isLocal;
+    wrapper.insertBefore(el, wrapper.firstChild);
+  }
+}
+
+async function leaveVideoCall() {
+  if (livekitRoom) {
+    await livekitRoom.disconnect();
+    livekitRoom = null;
+  }
+  document.getElementById('videoGrid').innerHTML = '';
+  document.getElementById('videoCallArea').style.display = 'none';
+  const btn = document.getElementById('videoCallBtn');
+  btn.textContent = '📹';
+  btn.style.borderColor = 'var(--border)';
+  btn.style.color = 'var(--muted)';
+  videoActive = false;
+  showToast('Left video call');
+}
 </script>
 </body>
 </html>
