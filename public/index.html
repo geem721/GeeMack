@@ -498,6 +498,7 @@
           </div>
         </div>
         <button onclick="openInviteModal()" style="background:rgba(0,229,255,0.08);border:1px solid rgba(0,229,255,0.3);color:var(--accent);border-radius:8px;padding:6px 12px;font-family:'Syne',sans-serif;font-size:11px;font-weight:700;cursor:pointer;">✉️ Invite</button>
+        <button id="videoCallBtn" onclick="toggleVideoCall()" style="background:var(--surface2);border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:6px 12px;font-family:'Syne',sans-serif;font-size:11px;font-weight:700;cursor:pointer;" title="Start Video Call">📹</button>
         <button onclick="clearGroupChat()" style="background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);color:var(--danger);border-radius:8px;padding:6px 12px;font-family:'Syne',sans-serif;font-size:11px;font-weight:700;cursor:pointer;">🗑 Clear</button>
       </div>
     </div>
@@ -1057,15 +1058,6 @@ function clearGroupChat(){
   }
 })();
 
-function clearGroupChat(){
-  if(!confirm('Clear chat from your view? (Messages stay in the room for others)'))return;
-  gcRenderedIds.clear();gcTranslationCache={};
-  const feed=document.getElementById('gcMessageFeed');
-  feed.innerHTML='<div style="text-align:center;color:var(--muted);font-family:\'DM Mono\',monospace;font-size:11px;margin:auto;">Reloading…</div>';
-  setTimeout(()=>listenToRoom(gcCurrentRoom),800);
-  showToast('View cleared');
-}
-
 function copyOCRInline(){if(!ocrTranslatedText){showToast('Nothing to copy');return;}navigator.clipboard.writeText(ocrTranslatedText).then(()=>showToast('Copied!'));}
 function escapeHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 function getFileIcon(ext){return({pdf:'📕',doc:'📝',docx:'📝',xls:'📊',xlsx:'📊',ppt:'📊',pptx:'📊',txt:'📄',md:'📄',epub:'📚',rtf:'📄',csv:'📊',html:'🌐',jpg:'🖼️',jpeg:'🖼️',png:'🖼️'})[ext]||'📄';}
@@ -1079,6 +1071,10 @@ renderHistory();
 // ── LIVEKIT VIDEO CHAT ───────────────────────────────────
 let livekitRoom = null;
 let videoActive = false;
+let captionWs = null;
+let captionRecorder = null;
+let captionOffFn = null;
+let mySpokenLang = 'en';
 
 async function toggleVideoCall() {
   if (videoActive) {
@@ -1089,6 +1085,7 @@ async function toggleVideoCall() {
 }
 
 async function joinVideoCall() {
+  const currentUser = window._tbAuth?.currentUser;
   if (!currentUser) { showToast('Please sign in first'); return; }
   const btn = document.getElementById('videoCallBtn');
   btn.textContent = '⏳';
@@ -1111,6 +1108,7 @@ async function joinVideoCall() {
     livekitRoom = new Room({ adaptiveStream: true, dynacast: true });
 
     livekitRoom.on(RoomEvent.TrackSubscribed, (track, pub, participant) => {
+      console.log('[track] subscribed:', track.kind, 'source:', track.source, 'from', participant.identity);
       attachTrack(track, participant.identity);
     });
     livekitRoom.on(RoomEvent.TrackUnsubscribed, (track, pub, participant) => {
@@ -1140,6 +1138,10 @@ async function joinVideoCall() {
     videoActive = true;
     showToast('Video call started!');
 
+    // Start live translated captions
+    startCaptionStream();
+    listenToCaptions(gcCurrentRoom);
+
   } catch (e) {
     console.error('Video error:', e);
     showToast('Could not start video: ' + e.message);
@@ -1168,6 +1170,91 @@ function attachTrack(track, identity, isLocal = false) {
     el.muted = isLocal;
     wrapper.insertBefore(el, wrapper.firstChild);
   }
+  if (track.kind === 'audio') {
+    const el = track.attach();
+    el.autoplay = true;
+    el.style.display = 'none';
+    if (isLocal) el.muted = true;
+    wrapper.appendChild(el);
+    el.play().then(() => console.log('[audio] playing for', identity)).catch(err => console.error('[audio] play() failed for', identity, err));
+    return;
+  }
+}
+
+function startCaptionStream() {
+  mySpokenLang = document.getElementById('srcLang').value;
+  if (mySpokenLang === 'auto') mySpokenLang = 'en';
+
+  navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+    const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    captionWs = new WebSocket(wsProtocol + '//' + location.host + '/ws/transcribe?lang=' + mySpokenLang);
+
+    captionWs.onopen = () => {
+      captionRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+      captionRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0 && captionWs && captionWs.readyState === WebSocket.OPEN) {
+          e.data.arrayBuffer().then(buf => captionWs.send(buf));
+        }
+      };
+      captionRecorder.start(250);
+    };
+
+    captionWs.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      if (data.type === 'transcript' && data.text) {
+        const currentUser = window._tbAuth?.currentUser;
+        const identity = currentUser?.email || currentUser?.uid || 'unknown';
+        const db = window._tbDb;
+        const captionsRef = window._tbRef(db, 'chats/' + gcCurrentRoom + '/captions');
+        window._tbPush(captionsRef, { from: identity, text: data.text, ts: window._tbServerTimestamp() });
+      }
+    };
+
+    captionWs.onerror = (e) => console.error('Caption WS error:', e);
+  }).catch(err => console.error('Mic access error for captions:', err));
+}
+
+function stopCaptionStream() {
+  if (captionRecorder && captionRecorder.state !== 'inactive') captionRecorder.stop();
+  captionRecorder = null;
+  if (captionWs) { captionWs.close(); captionWs = null; }
+  if (captionOffFn) { captionOffFn(); captionOffFn = null; }
+}
+
+function listenToCaptions(room) {
+  const currentUser = window._tbAuth?.currentUser;
+  const myIdentity = currentUser?.email || currentUser?.uid;
+  const db = window._tbDb;
+  const captionsRef = window._tbRef(db, 'chats/' + room + '/captions');
+  const capQuery = window._tbQuery(captionsRef, window._tbLimitToLast(1));
+
+  window._tbOnValue(capQuery, (snapshot) => {
+    snapshot.forEach(child => {
+      const msg = child.val();
+      const myLang = document.getElementById('tgtLang').value || 'en';
+      console.log('[captions] snapshot received:', msg, 'myIdentity:', myIdentity, 'room:', room);
+      if (!msg || msg.from === myIdentity) return;
+      callTranslate(msg.text, 'auto', myLang).then(result => {
+        showCaption(msg.from, result.translation || msg.text);
+      }).catch(() => showCaption(msg.from, msg.text));
+    });
+  });
+  captionOffFn = () => window._tbOff(capQuery);
+}
+
+function showCaption(identity, text) {
+  const wrapper = document.getElementById('video-' + identity);
+  if (!wrapper) return;
+  let capDiv = document.getElementById('cap-' + identity);
+  if (!capDiv) {
+    capDiv = document.createElement('div');
+    capDiv.id = 'cap-' + identity;
+    capDiv.style.cssText = 'position:absolute;bottom:6px;right:8px;left:8px;color:#fff;font-size:12px;font-family:"DM Mono",monospace;background:rgba(0,0,0,0.7);padding:4px 8px;border-radius:4px;z-index:3;max-height:40px;overflow:hidden;';
+    wrapper.appendChild(capDiv);
+  }
+  capDiv.textContent = text;
+  clearTimeout(capDiv._hideTimer);
+  capDiv._hideTimer = setTimeout(() => { capDiv.textContent = ''; }, 6000);
 }
 
 async function leaveVideoCall() {
@@ -1175,6 +1262,7 @@ async function leaveVideoCall() {
     await livekitRoom.disconnect();
     livekitRoom = null;
   }
+  stopCaptionStream();
   document.getElementById('videoGrid').innerHTML = '';
   document.getElementById('videoCallArea').style.display = 'none';
   const btn = document.getElementById('videoCallBtn');

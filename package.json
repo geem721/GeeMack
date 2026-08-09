@@ -1,10 +1,13 @@
 {
   "type": "module",
   "dependencies": {
+    "@deepgram/sdk": "^3.13.0",
     "@livekit/components-react": "^2.9.21",
+    "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "livekit-client": "^2.20.0",
-    "livekit-server-sdk": "^2.15.5"
+    "livekit-server-sdk": "^2.15.5",
+    "ws": "^8.21.2"
   },
   "scripts": {
     "start": "node server.js"

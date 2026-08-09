@@ -1,6 +1,12 @@
+import 'dotenv/config';
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import http from 'http';
+import { WebSocketServer } from 'ws';
+import deepgramSdk from '@deepgram/sdk';
+const { createClient, LiveTranscriptionEvents } = deepgramSdk;
+import { AccessToken } from 'livekit-server-sdk';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -67,11 +73,6 @@ app.post('/api/translate', async (req, res) => {
   }
 });
 
-const PORT = 3000;
-app.listen(PORT, () => console.log(`TalkBridge server running on port ${PORT}`));
-
-import { AccessToken } from 'livekit-server-sdk';
-
 app.post('/api/livekit-token', async (req, res) => {
   const { roomName, participantName } = req.body;
   if (!roomName || !participantName) {
@@ -91,3 +92,104 @@ app.post('/api/livekit-token', async (req, res) => {
     return res.status(500).json({ error: err.message });
   }
 });
+
+// --- Real-time captioning: /ws/transcribe ---
+const deepgram = createClient(process.env.DEEPGRAM_API_KEY);
+
+const DEEPGRAM_LANG_MAP = {
+  auto: 'multi', zh: 'zh', sw: 'sw', ur: 'ur'
+};
+
+function toDeepgramLang(code) {
+  return DEEPGRAM_LANG_MAP[code] || code || 'en';
+}
+
+const server = http.createServer(app);
+const wss = new WebSocketServer({ noServer: true });
+
+server.on('upgrade', (req, socket, head) => {
+  const { pathname } = new URL(req.url, `http://${req.headers.host}`);
+  if (pathname === '/ws/transcribe') {
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      wss.emit('connection', ws, req);
+    });
+  } else {
+    socket.destroy();
+  }
+});
+
+wss.on('connection', (ws, req) => {
+  const { searchParams } = new URL(req.url, `http://${req.headers.host}`);
+  const lang = toDeepgramLang(searchParams.get('lang'));
+
+  const connId = Math.random().toString(36).slice(2, 8);
+  let bytesReceived = 0;
+  let msgCount = 0;
+  const userAgent = req.headers['user-agent'] || 'unknown';
+  console.log(`[transcribe][${connId}] client connected, lang=${lang}, ua=${userAgent}`);
+
+  const dgConnectAttemptTime = Date.now();
+  console.log(`[transcribe][${connId}] calling deepgram.listen.live() now`);
+  const dgConnection = deepgram.listen.live({
+    model: 'nova-2',
+    language: lang,
+    smart_format: true,
+    interim_results: false,
+    encoding: 'opus',
+    container: 'webm'
+  });
+
+  let dgOpened = false;
+  const openWatchdog = setTimeout(() => {
+    if (!dgOpened) {
+      console.warn(`[transcribe][${connId}] WARNING: Deepgram Open event has NOT fired after 8000ms`);
+    }
+  }, 8000);
+  dgConnection.on(LiveTranscriptionEvents.Open, () => {
+    dgOpened = true;
+    clearTimeout(openWatchdog);
+    const elapsed = Date.now() - dgConnectAttemptTime;
+    console.log(`[transcribe][${connId}] Deepgram connection opened (took ${elapsed}ms)`);
+  });
+
+  dgConnection.on(LiveTranscriptionEvents.Transcript, (data) => {
+    const transcript = data?.channel?.alternatives?.[0]?.transcript;
+    console.log(`[transcribe][${connId}] transcript event, final=${data.is_final}, text="${transcript}"`);
+    if (transcript && transcript.trim() && data.is_final) {
+      if (ws.readyState === ws.OPEN) {
+        ws.send(JSON.stringify({ type: 'transcript', text: transcript.trim() }));
+      }
+    }
+  });
+
+  dgConnection.on(LiveTranscriptionEvents.Error, (err) => {
+    console.error(`[transcribe][${connId}] Deepgram error:`, err);
+  });
+
+  dgConnection.on(LiveTranscriptionEvents.Close, (event) => {
+    console.log(`[transcribe][${connId}] Deepgram connection closed, bytesReceived=${bytesReceived}, msgCount=${msgCount}, code=${event?.code}, reason=${event?.reason}, wasClean=${event?.wasClean}`);
+  });
+
+  ws.on('message', (data) => {
+    bytesReceived += data.length || 0;
+    msgCount += 1;
+    if (msgCount % 20 === 0) {
+      console.log(`[transcribe][${connId}] audio received so far: ${bytesReceived} bytes in ${msgCount} messages`);
+    }
+    if (dgConnection.getReadyState() === 1 /* OPEN */) {
+      dgConnection.send(data);
+    }
+  });
+
+  ws.on('close', () => {
+    console.log('[transcribe] client disconnected');
+    try { dgConnection.finish(); } catch (e) { /* already closed */ }
+  });
+
+  ws.on('error', (err) => {
+    console.error('[transcribe] client ws error:', err);
+  });
+});
+
+const PORT = 3000;
+server.listen(PORT, () => console.log(`TalkBridge server running on port ${PORT}`));
