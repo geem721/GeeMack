@@ -1218,16 +1218,24 @@ function startCaptionStream() {
 function onGcSrcLangChange() {
   // The spoken-language WS is opened once per call with ?lang=..., so a mid-call
   // change needs a reconnect for Deepgram to actually pick up the new language.
+  // Only restart the OUTGOING mic/WS stream here -- stopCaptionStream() also tears
+  // down the INCOMING captions listener (captionOffFn), which startCaptionStream()
+  // never re-subscribes, so calling the full stop/start pair here would silently
+  // kill your ability to receive anyone else's captions for the rest of the call.
   if (videoActive && captionWs) {
-    stopCaptionStream();
+    stopOutgoingCaptionStream();
     startCaptionStream();
   }
 }
 
-function stopCaptionStream() {
+function stopOutgoingCaptionStream() {
   if (captionRecorder && captionRecorder.state !== 'inactive') captionRecorder.stop();
   captionRecorder = null;
   if (captionWs) { captionWs.close(); captionWs = null; }
+}
+
+function stopCaptionStream() {
+  stopOutgoingCaptionStream();
   if (captionOffFn) { captionOffFn(); captionOffFn = null; }
 }
 
