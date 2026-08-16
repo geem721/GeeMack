@@ -133,17 +133,56 @@ fixed (this is the important part of today):**
     result reported earlier today may resolve now that the actual deploy pipeline works,
     but this needs a real cross-device test to confirm, not just file-diff verification.
 
-**Next session should:**
-1. Confirm with the user whether the original "translates to Spanish" bug is actually
-   gone now that the deploy pipeline is fixed. If not, the investigation needs to restart
-   from an accurate baseline — don't assume `76b304a`/`997d50f` are sufficient just
-   because they're finally deployed.
-2. Get the current real nginx config for `talk-bridge.org` (`sudo nginx -T` or the
-   sites-enabled file) and write the `location /react-preview/` block against it — not
-   yet done. Deploy commit `bbc70ff` (Vite base path) alongside it.
-3. Once Phase 0 is reachable and confirmed in a browser, start Phase 1 (Translate tab).
-4. Do NOT re-ask whether to do the React migration, whether to include the 3 extra
-   languages, repo location, or Video Call's own tab — all four are decided. Do NOT
-   re-investigate the May 2026 React→HTML regression — that's fully documented in
-   `POSTMORTEM.md`. DO treat "is the original bug actually fixed" as still open until the
-   user confirms it themselves post-deploy-fix.
+**Update, same session — Phase 0 reachability done, session ended here deliberately:**
+
+- Got the real nginx config (`sudo nginx -T`), found it's `listen 80` only with no visible
+  TLS block, confirmed via `WebFetch` that `https://talk-bridge.org` nonetheless loads
+  real content — so HTTPS terminates somewhere upstream of this nginx (likely Cloudflare
+  or similar), not in this config file. Doesn't change the plan: any `location` added to
+  this same `server {}` block inherits whatever HTTPS handling already applies to the
+  domain.
+- Added `location /react-preview/ { alias /var/www/talkbridge-react/; try_files $uri
+  $uri/ /react-preview/index.html; }` to `/etc/nginx/sites-enabled/talkbridge` (manual
+  edit via `nano`, deliberately not scripted since it's a one-time change to a file
+  outside git). Used `alias` not `root` — with `root` the path would double up
+  (`/var/www/talkbridge-react/react-preview/...`), a common nginx mistake avoided here.
+- `/var/www` required `sudo mkdir` (root-owned parent), then `sudo chown
+  geem721:geem721 /var/www/talkbridge-react` so subsequent deploys don't need sudo —
+  same pattern as the `/var/www/talkbridge` ownership fix earlier this session.
+- Built and copied `web/dist/*` into `/var/www/talkbridge-react/`, `sudo systemctl reload
+  nginx`. **Verified: `curl` returns `200` for `https://talk-bridge.org/react-preview/`.**
+  Phase 0 is live, reachable, and complete — nav shell with all 7 tabs (Translate, Camera
+  OCR, Documents, Group Chat, Video Call, History, Settings), shared 29-language module,
+  Video Call as its own top-level tab.
+- **Note for later:** this deploy (`web/dist` → `/var/www/talkbridge-react/`) was done
+  manually, once. `deploy.sh` does NOT yet rebuild/redeploy `web/` automatically on future
+  `git push`es — every session that touches `web/` needs to manually rebuild and copy
+  until that's automated. Deliberately not automated today to avoid adding an unconditional
+  `npm run build` to a cron job that fires every 5 minutes forever — worth designing
+  properly (e.g. only rebuild if `git pull` actually changed something) rather than bolting
+  on quickly.
+- **Session ended here at the user's request**, specifically so they can test the actual
+  video-call translation fix in real-world conditions (across two devices) before the next
+  session starts. **This is the single most important thing to check first next time** —
+  everything else this session was either fully verified (Phase 0 live, deploy pipeline
+  fixed) or is normal next-phase planning, but whether the original user-reported bug is
+  actually gone has NOT been confirmed by the user yet, only inferred from file diffs.
+
+**Next session should — in this exact order:**
+1. **Ask first, before anything else: did the video call translation work correctly
+   across devices?** This is the one open question left over from today. If yes, that
+   whole thread is closed and Phase 1 can start clean. If no, treat it as a fresh
+   investigation — don't assume `76b304a`/`997d50f` are sufficient just because they're
+   finally deployed; the deploy-pipeline fix only means the code is now reachable, not
+   that the code is necessarily correct.
+2. If the bug is confirmed fixed (or the user doesn't want to dwell on it further), start
+   Phase 1 (Translate tab: text translation, mic input, TTS playback, translation
+   history) per `MIGRATION_PLAN.md`, using the shared `web/src/languages.js` module.
+   Remember `web/dist` still needs a manual rebuild+copy to `/var/www/talkbridge-react/`
+   after any `web/` change — see note above.
+3. Do NOT re-ask whether to do the React migration, whether to include the 3 extra
+   languages, repo location, or Video Call's own tab, or whether Phase 0 is reachable —
+   all five are done and verified. Do NOT re-investigate the May 2026 React→HTML
+   regression — fully documented in `POSTMORTEM.md`. Do NOT re-diagnose the deploy
+   pipeline (`/var/www/talkbridge` ownership, `deploy.sh` sudo calls) — already fixed and
+   verified working today.
