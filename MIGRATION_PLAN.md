@@ -28,16 +28,22 @@ standalone mic-only recorder, per the 2026-08-16 decision).
 ## Phases
 
 ### Phase 0 — Scaffold + shared language list
-- New Vite + React project (separate directory, e.g. `web/`, so it can be developed and
-  built independently of the current `public/index.html`).
-- Base layout: nav/tabs matching the current app's structure (Translate, Camera OCR,
-  Documents, Group Chat, History, Settings).
-- One shared `languages.js` (or similar) module: the full list, super-setting everything
-  currently scattered across `srcLang`/`tgtLang`/`camSrcLang`/`camTgtLang`/`docSrcLang`/
-  `docTgtLang`/`gcSrcLang`/`gcTgtLang`, plus the languages lost from the old React app
-  (Hebrew, Romanian, Hungarian) — pending your confirmation on including those too.
+- New Vite + React project in `web/` (a subdirectory of this same repo), so it can be
+  developed and built independently of the current `public/index.html` without touching
+  it.
+- Base layout: nav/tabs — **Translate, Camera OCR, Documents, Group Chat, Video Call,
+  History, Settings.** Video Call is its own top-level tab, not nested inside Group Chat
+  (today's app buries the video call button inside the Group Chat panel; per the
+  2026-08-16 decision this gets promoted to a sibling tab so it's not tied to text chat).
+- One shared `languages.js` module: 29 languages total — the current 26-language
+  Translate-tab list, **plus Hebrew, Romanian, and Hungarian restored from the old React
+  app** (confirmed 2026-08-16; these three never made it into any version of
+  `public/index.html`). Superset of everything currently scattered across
+  `srcLang`/`tgtLang`/`camSrcLang`/`camTgtLang`/`docSrcLang`/`docTgtLang`/`gcSrcLang`/
+  `gcTgtLang`.
 - **Acceptance:** app scaffold builds and deploys somewhere reachable (a subpath or
-  staging port on Apollo1), shows the nav shell, no features yet.
+  staging port on Apollo1), shows the nav shell including the new Video Call tab, no
+  features yet.
 
 ### Phase 1 — Translate tab
 - Text translation, mic input, text-to-speech playback, translation history.
@@ -57,15 +63,17 @@ standalone mic-only recorder, per the 2026-08-16 decision).
 ### Phase 4 — Group Chat
 - Firebase-backed realtime chat, rooms, presence, invites, per-message live translation.
 - **Acceptance:** feature-parity with today's Group Chat tab (text chat portion only —
-  video call is Phase 5).
+  video call is its own tab, Phase 5, per the 2026-08-16 decision).
 
 ### Phase 5 — Video Call
-- LiveKit video/audio, Deepgram live captions, per-listener translated captions (today's
+- Its own top-level nav tab (not nested inside Group Chat — see Phase 0). LiveKit
+  video/audio, Deepgram live captions, per-listener translated captions (today's
   `gcSrcLang`/`gcTgtLang`-driven behavior, including the mid-call reconnect fix from this
   session), full-width call control.
 - **New:** call recording (record the video call itself, not just mic audio — this is the
   restored/reimagined Record feature).
-- **Acceptance:** feature-parity with today's Video Call, plus working call recording.
+- **Acceptance:** feature-parity with today's Video Call as its own tab, plus working call
+  recording.
 
 ### Phase 6 — Cutover
 - Point Apollo1's served app at the React build instead of `public/index.html`.
@@ -74,12 +82,11 @@ standalone mic-only recorder, per the 2026-08-16 decision).
   caused the problem we're fixing).
 - Final verification pass across every feature before calling it done.
 
-## Open questions to confirm before Phase 0 starts
+## Decisions confirmed 2026-08-16 (all three open questions resolved)
 
-1. Include Hebrew, Romanian, and Hungarian in the shared language list (they existed in
-   the old React app but never made it into any version of `public/index.html`), or stick
-   to the current 26-language Translate-tab list plus nothing more?
-2. Where should the new React app live during development — a subdirectory of this same
-   repo, or a separate repo? (Same repo is simpler for one person managing one deploy
-   target; separate repo is cleaner if you want the old app frozen and untouched.)
-3. Confirm Phase 0 scope above before I start writing code against it.
+1. **Language list:** include Hebrew, Romanian, and Hungarian — 29 languages total.
+2. **Repo location:** same repo, `web/` subdirectory.
+3. **Phase 0 scope:** confirmed as written above, with one addition — Video Call is
+   promoted to its own top-level nav tab instead of living inside Group Chat.
+
+Phase 0 is now in progress.
