@@ -498,9 +498,11 @@
           </div>
         </div>
         <button onclick="openInviteModal()" style="background:rgba(0,229,255,0.08);border:1px solid rgba(0,229,255,0.3);color:var(--accent);border-radius:8px;padding:6px 12px;font-family:'Syne',sans-serif;font-size:11px;font-weight:700;cursor:pointer;">✉️ Invite</button>
-        <button id="videoCallBtn" onclick="toggleVideoCall()" style="background:var(--surface2);border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:6px 12px;font-family:'Syne',sans-serif;font-size:11px;font-weight:700;cursor:pointer;" title="Start Video Call">📹</button>
         <button onclick="clearGroupChat()" style="background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);color:var(--danger);border-radius:8px;padding:6px 12px;font-family:'Syne',sans-serif;font-size:11px;font-weight:700;cursor:pointer;">🗑 Clear</button>
       </div>
+    </div>
+    <div style="padding:0 20px 10px;">
+      <button id="videoCallBtn" onclick="toggleVideoCall()" style="width:100%;background:var(--surface2);border:1px solid var(--border);color:var(--muted);border-radius:var(--radius);padding:12px;font-family:'Syne',sans-serif;font-size:13px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;">📹 Start Video Call</button>
     </div>
     <div class="lang-bar" style="padding-top:4px;padding-bottom:4px;">
       <select class="lang-sel" id="gcSrcLang" onchange="onGcSrcLangChange()">
@@ -1088,7 +1090,7 @@ async function joinVideoCall() {
   const currentUser = window._tbAuth?.currentUser;
   if (!currentUser) { showToast('Please sign in first'); return; }
   const btn = document.getElementById('videoCallBtn');
-  btn.textContent = '⏳';
+  btn.textContent = '⏳ Connecting…';
   btn.style.borderColor = 'var(--accent)';
 
   try {
@@ -1132,7 +1134,7 @@ async function joinVideoCall() {
     attachTrack(videoTrack, 'You (local)', true);
 
     document.getElementById('videoCallArea').style.display = 'block';
-    btn.textContent = '🔴';
+    btn.textContent = '🔴 End Video Call';
     btn.style.borderColor = '#dc3232';
     btn.style.color = '#dc3232';
     videoActive = true;
@@ -1145,7 +1147,7 @@ async function joinVideoCall() {
   } catch (e) {
     console.error('Video error:', e);
     showToast('Could not start video: ' + e.message);
-    document.getElementById('videoCallBtn').textContent = '📹';
+    document.getElementById('videoCallBtn').textContent = '📹 Start Video Call';
     document.getElementById('videoCallBtn').style.borderColor = 'var(--border)';
     document.getElementById('videoCallBtn').style.color = 'var(--muted)';
   }
@@ -1274,7 +1276,7 @@ async function leaveVideoCall() {
   document.getElementById('videoGrid').innerHTML = '';
   document.getElementById('videoCallArea').style.display = 'none';
   const btn = document.getElementById('videoCallBtn');
-  btn.textContent = '📹';
+  btn.textContent = '📹 Start Video Call';
   btn.style.borderColor = 'var(--border)';
   btn.style.color = 'var(--muted)';
   videoActive = false;
