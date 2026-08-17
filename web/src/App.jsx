@@ -1,5 +1,6 @@
 import { useState } from "react";
 import "./App.css";
+import "./shared.css";
 import { ToastProvider } from "./components/Toast.jsx";
 import Translate from "./tabs/Translate.jsx";
 import CameraOCR from "./tabs/CameraOCR.jsx";
@@ -31,7 +32,7 @@ export default function App() {
       <div className="app-shell">
         <header className="app-header">
           <span className="app-title">TalkBridge</span>
-          <span className="app-subtitle">React rebuild — Phase 1: Translate tab</span>
+          <span className="app-subtitle">React rebuild — Phase 2: Camera OCR tab</span>
         </header>
 
         <nav className="tab-nav">

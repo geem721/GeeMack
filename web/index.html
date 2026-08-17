@@ -8,6 +8,11 @@
   </head>
   <body>
     <div id="root"></div>
+    <!-- Same pinned version as the legacy public/index.html app (Camera OCR, Phase 2) —
+         loaded globally rather than bundled via npm since Tesseract.js's worker/wasm
+         asset pipeline doesn't play nicely with Vite's bundler, and this exact CDN setup
+         is already proven working in production. Referenced as window.Tesseract. -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/4.1.1/tesseract.min.js"></script>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

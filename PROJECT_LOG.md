@@ -304,3 +304,56 @@ fixed (this is the important part of today):**
 live camera feed, capture + OCR + translate, feature-parity with today's Camera OCR tab.
 Do NOT re-verify Phase 1 further or re-investigate the 502s — both are closed, confirmed
 fixed, see above.
+
+**Update, same session — Phase 2 built (Camera OCR tab), commit follows below:**
+
+- Built the Camera OCR tab in React: `getUserMedia` live camera preview (back/front
+  camera toggle), capture-to-canvas, Tesseract.js OCR, then `/api/translate` on the
+  extracted text — full pipeline matching the legacy `public/index.html` Camera OCR panel.
+- **Tesseract.js loaded via the same pinned CDN script tag** (`4.1.1`, in `web/index.html`,
+  referenced as `window.Tesseract`) rather than an npm import — its worker/wasm asset
+  pipeline doesn't bundle cleanly with Vite, and this exact CDN setup is already proven
+  working in production for the legacy app. Not worth re-litigating unless it actually
+  causes a problem.
+- **Carried over two legacy quirks deliberately, not bugs**: (1) the camera OCR language
+  dropdowns are a smaller, fixed subset (10-11 languages) distinct from the full
+  29-language Translate list — this matches what the legacy panel actually offered, not
+  an oversight. (2) Tesseract always OCRs against a fixed hardcoded language string
+  (`eng+spa+fra+deu+chi_sim+jpn+kor+ara+rus`) regardless of the source-language dropdown
+  — the dropdown only feeds the `/api/translate` call. Verified this by reading the
+  legacy JS closely, not guessing.
+- Same local-state scope decision as Phase 1's Translate tab: "Use back camera" and
+  "Auto-capture mode" toggles live in `CameraOCR.jsx` itself, not a Settings tab (still
+  doesn't exist / isn't its own phase).
+- **Refactored shared UI primitives out of `Translate.css`** into a new
+  `web/src/shared.css` (buttons, spinner, lang-bar/lang-sel, settings blocks, etc.),
+  imported once globally in `App.jsx`. Doing this now, before Camera OCR could silently
+  depend on classes "owned" by Translate.css — avoids the two tabs becoming invisibly
+  coupled through load order. Also pulled the `/api/translate` fetch out of `Translate.jsx`
+  into `web/src/api/translate.js`, since Camera OCR needs the same call and Documents
+  (Phase 3) will too.
+- **Verified in this sandbox**: `npm run build` succeeds, `oxlint` clean (same expected
+  `Toast.jsx` fast-refresh warning as Phase 1). Headless-browser smoke test confirmed: no
+  app errors (one expected `ERR_TUNNEL_CONNECTION_FAILED` on the Tesseract CDN fetch —
+  this sandbox blocks that domain the same way it blocked `talk-bridge.org` directly
+  earlier; not a real issue), Translate tab still renders correctly with the refactored
+  shared CSS (confirmed computed button color unchanged), Camera OCR tab renders its
+  language dropdowns (11 src / 10 tgt options), Start Camera button, and both behavior
+  checkboxes.
+- **NOT yet verified**: actual camera capture + OCR + translate round-trip in a real
+  browser — this sandbox has no camera device and blocks the Tesseract CDN, so like
+  Phase 1's `/api/translate` call, this needs a real test on Apollo1/a real device before
+  calling Phase 2 done. **This is the next thing to check.**
+- **Not yet deployed to Apollo1.**
+
+**Next session (or rest of this one) should — in this exact order:**
+1. Deploy this commit to Apollo1 (patch → `git am` in both clones → `git push` →
+   `cd web && npm install && npm run build` → `cp -r dist/* /var/www/talkbridge-react/`
+   — same steps as Phase 1, `web/` deploy is still manual).
+2. **Real test**: open the Camera tab in an actual browser on a device with a camera,
+   grant camera permission, capture some text (a sign, a page, anything with text on it),
+   confirm OCR extracts it and translation comes back correctly. This is the one thing
+   that could not be verified in the sandbox.
+3. If Phase 2 checks out, move to Phase 3 (Documents tab) per `MIGRATION_PLAN.md`.
+4. Do NOT re-litigate the shared.css refactor, the fixed-Tesseract-language-string
+   quirk, or the CDN-vs-npm choice for Tesseract.js — all deliberate, documented above.

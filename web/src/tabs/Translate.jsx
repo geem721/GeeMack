@@ -3,6 +3,7 @@ import { AUTO_DETECT, LANGUAGES, languageLabel } from "../languages.js";
 import { useToast } from "../components/Toast.jsx";
 import Modal from "../components/Modal.jsx";
 import { useTranslationHistory } from "../hooks/useTranslationHistory.js";
+import { callTranslate } from "../api/translate.js";
 import "./Translate.css";
 
 // Browsers with tested-limited/no native TTS voices for these languages, carried over
@@ -58,17 +59,6 @@ export default function Translate() {
     },
     [],
   );
-
-  async function callTranslate(text, src, tgt) {
-    const response = await fetch("/api/translate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, srcLang: src, tgtLang: tgt }),
-    });
-    const data = await response.json();
-    if (data.error) throw new Error(data.error);
-    return data;
-  }
 
   async function doTranslate(overrideText) {
     const text = (overrideText ?? srcText).trim();

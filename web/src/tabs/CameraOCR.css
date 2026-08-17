@@ -1,0 +1,119 @@
+/* Camera-OCR-tab-specific rules only. Shared primitives live in ../shared.css. */
+
+.camera-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.camera-wrap {
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: #000;
+  position: relative;
+  border: 1px solid var(--border);
+}
+
+.camera-wrap video {
+  width: 100%;
+  display: block;
+  max-height: 300px;
+  object-fit: cover;
+}
+
+.camera-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 12px;
+  background: rgba(0, 0, 0, 0.5);
+  text-align: center;
+  color: #fff;
+}
+
+.camera-overlay-icon {
+  font-size: 48px;
+}
+
+.camera-overlay-title {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.camera-overlay-sub {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.cam-lang-bar {
+  padding-top: 0;
+}
+
+.cam-arrow {
+  color: var(--muted);
+  font-size: 18px;
+}
+
+.cam-controls {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.ocr-result {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.ocr-result-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: var(--muted);
+}
+
+.ocr-detected-lang {
+  color: var(--accent);
+  font-size: 10px;
+}
+
+.ocr-copy-btn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.ocr-copy-btn:hover {
+  color: var(--text);
+}
+
+.ocr-result-body {
+  padding: 12px 14px;
+  font-size: 13px;
+  line-height: 1.6;
+  min-height: 60px;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.ocr-result-body .placeholder {
+  font-style: italic;
+  font-size: 11px;
+}
+
+.cam-fullscreen-row {
+  display: flex;
+}
