@@ -1,5 +1,6 @@
 import { useState } from "react";
 import "./App.css";
+import { ToastProvider } from "./components/Toast.jsx";
 import Translate from "./tabs/Translate.jsx";
 import CameraOCR from "./tabs/CameraOCR.jsx";
 import Documents from "./tabs/Documents.jsx";
@@ -26,28 +27,30 @@ export default function App() {
   const ActiveComponent = active.Component;
 
   return (
-    <div className="app-shell">
-      <header className="app-header">
-        <span className="app-title">TalkBridge</span>
-        <span className="app-subtitle">React rebuild — Phase 0 scaffold</span>
-      </header>
+    <ToastProvider>
+      <div className="app-shell">
+        <header className="app-header">
+          <span className="app-title">TalkBridge</span>
+          <span className="app-subtitle">React rebuild — Phase 1: Translate tab</span>
+        </header>
 
-      <nav className="tab-nav">
-        {TABS.map((tab) => (
-          <button
-            key={tab.key}
-            className={"nav-btn" + (tab.key === activeTab ? " active" : "")}
-            onClick={() => setActiveTab(tab.key)}
-          >
-            <span className="icon">{tab.icon}</span>
-            {tab.label}
-          </button>
-        ))}
-      </nav>
+        <nav className="tab-nav">
+          {TABS.map((tab) => (
+            <button
+              key={tab.key}
+              className={"nav-btn" + (tab.key === activeTab ? " active" : "")}
+              onClick={() => setActiveTab(tab.key)}
+            >
+              <span className="icon">{tab.icon}</span>
+              {tab.label}
+            </button>
+          ))}
+        </nav>
 
-      <main className="tab-content">
-        <ActiveComponent />
-      </main>
-    </div>
+        <main className="tab-content">
+          <ActiveComponent />
+        </main>
+      </div>
+    </ToastProvider>
   );
 }

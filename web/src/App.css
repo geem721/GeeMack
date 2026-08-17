@@ -1,3 +1,17 @@
+:root {
+  --bg: #0f1420;
+  --surface: #171d2c;
+  --surface2: #1a2032;
+  --border: #232a3d;
+  --text: #e8ebf3;
+  --muted: #8b93a8;
+  --accent: #3a63f0;
+  --accent2: #7c3aed;
+  --danger: #ef4444;
+  --success: #10b981;
+  --radius: 12px;
+}
+
 * {
   box-sizing: border-box;
 }

@@ -186,3 +186,25 @@ fixed (this is the important part of today):**
    regression — fully documented in `POSTMORTEM.md`. Do NOT re-diagnose the deploy
    pipeline (`/var/www/talkbridge` ownership, `deploy.sh` sudo calls) — already fixed and
    verified working today.
+
+---
+
+## 2026-08-17 — Translation bug CONFIRMED FIXED; starting Phase 1
+
+- User tested real-world video call translation across devices. Result, verbatim:
+  "testing went well. translation is happening as it should. I think that it's working
+  as it should." This closes the loop opened in the previous session: the original
+  user-reported bug ("translation only ever comes out in Spanish") is confirmed fixed.
+- **Root cause confirmation**: this was never a translation-logic bug. It was the broken
+  deploy pipeline (cron running `deploy.sh` non-interactively, `sudo cp`/`sudo chown`
+  silently failing every 5 minutes for who knows how long) meaning fixes committed to git
+  were never actually reaching `/var/www/talkbridge/index.html`. Once ownership was
+  changed to `geem721:geem721` and `deploy.sh` stopped needing sudo, the real fix
+  (`stopOutgoingCaptionStream` etc., commits `76b304a`–`997d50f`) finally went live and
+  the bug is gone.
+- No further action needed on this thread. Do NOT re-investigate the "translates to
+  Spanish" bug in future sessions — it is closed, confirmed by real user testing, not
+  just file-diff inference.
+- **Starting Phase 1 now** per `MIGRATION_PLAN.md`: Translate tab (text translation, mic
+  input, TTS playback, translation history), built on top of the Phase 0 scaffold, using
+  the shared `web/src/languages.js` module for the language list.
