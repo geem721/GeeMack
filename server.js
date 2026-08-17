@@ -51,7 +51,15 @@ app.post('/api/translate', async (req, res) => {
       },
       body: JSON.stringify({
         model: 'claude-sonnet-4-6',
-        max_tokens: 1000,
+        // Was 1000 — too tight once callers started sending up to ~3000-character
+        // document chunks (Phase 3's Documents tab). A translation into a more verbose
+        // target language plus the required JSON wrapper can exceed 1000 output tokens,
+        // which truncates the JSON mid-string; the parse then fails and the fallback
+        // path below dumps the raw, truncated model output as if it were the
+        // translation. Confirmed live: a real PDF chunk truncated mid-word ("Jede
+        // Ent...") with exactly this symptom. 4096 gives real headroom for a 3000-char
+        // chunk in any target language without being an unbounded blank check.
+        max_tokens: 4096,
         system: systemPrompt,
         messages: [{ role: 'user', content: text }]
       })

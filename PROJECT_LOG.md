@@ -473,3 +473,47 @@ fixed, see above.
    — the default `^6` crashes in at least this environment), the RTF mini-parser, or the
    .doc/.ppt scope line — all deliberate, documented above, and actually verified against
    real files, not assumed to work.
+
+**Update, same session — Phase 3 live-tested, two more real bugs found and fixed:**
+
+User tested Phase 3 for real with an actual PDF (a VA benefits factsheet) and hit two
+separate issues, both fixed this session:
+
+1. **nginx served `.mjs` files with the wrong MIME type.** PDF parsing failed in the
+   browser with `Error: Setting up fake worker failed: "Failed to fetch dynamically
+   imported module: .../assets/pdf.worker.min-yatZIOMy.mjs"`. Diagnosed via `curl -I` on
+   the worker URL before touching anything: file existed (200, correct byte count), but
+   `content-type: application/octet-stream` instead of JS — `/etc/nginx/mime.types` on
+   Apollo1 predates the `.mjs` extension (a well-known, common nginx gotcha, not specific
+   to this app). **Fixed** by adding `mjs` to the existing `application/javascript js;`
+   line in `/etc/nginx/mime.types` (backed up first as `mime.types.bak`), `nginx -t`,
+   reload. Verified via `curl -I` again: `content-type` now `application/javascript`.
+   This is a global nginx config change (not per-site, not in git), so it also covers any
+   other `.mjs` module the app needs in future.
+2. **`server.js`'s `/api/translate` had `max_tokens: 1000` hardcoded** — fine for short
+   Translate-tab text, but too tight for Documents' ~3000-character chunks once
+   translated into a more verbose language plus JSON-wrapper overhead. Symptom, seen
+   live: the translated-result box showed raw, truncated JSON
+   (`{"detected":"en",...,"translation":"...Jede Ent`, cut off mid-word) instead of clean
+   translated text — the model's response got cut off by the token limit, breaking the
+   JSON `server.js` expects back, so its own `catch` fallback dumped the raw broken text
+   as if it were the translation. **Fixed**: bumped `max_tokens` to `4096` in `server.js`
+   (commit follows). This benefits every tab that calls `/api/translate` with a longer
+   text, not just Documents.
+- Sent the user a bundle of real test files (CSV/PPTX/XLSX/EPUB/MD/RTF/ODT, all sharing
+  the same short sample text) to test the remaining formats against the live site,
+  since this sandbox can generate files but can't upload through Apollo1's real browser
+  session — that has to happen on the user's end.
+- **Both fixes verified working live** (PDF extraction + translation round-tripped
+  correctly on the real factsheet once both were applied — real German output, no more
+  raw JSON, no more truncation).
+- `server.js` fix needs deploying same as always (patch → `git am` in `~/GeeMack`, being
+  careful to `cd` there first, → `git push` → `cd ~/GEEMACK && git pull` → **also needs
+  `pm2 restart talkbridge`** since this changes the running Node process, not just static
+  files — the new `deploy.sh` handles this automatically now since it restarts on any
+  new commit, but if applying this patch manually before cron's next run, restart `pm2`
+  by hand or just wait up to 5 minutes for cron to pick it up).
+
+**Next: wait for the user to test the remaining formats (CSV/PPTX/XLSX/EPUB/MD/RTF/ODT)
+against the live site with the test bundle sent this session, then decide whether Phase 3
+is fully done or needs another fix round, before moving to Phase 4 (Group Chat).**
