@@ -208,3 +208,68 @@ fixed (this is the important part of today):**
 - **Starting Phase 1 now** per `MIGRATION_PLAN.md`: Translate tab (text translation, mic
   input, TTS playback, translation history), built on top of the Phase 0 scaffold, using
   the shared `web/src/languages.js` module for the language list.
+
+**Update, same session — Phase 1 built (Translate tab), commit `e204ee1`:**
+
+- Built the full Translate tab in React: language selects (source w/ auto-detect +
+  target, both using the shared 29-language `web/src/languages.js` list), swap, mic
+  input (Web Speech API, continuous mode with silence-based auto-stop — 1.5s normal /
+  3s extended), TTS playback via `speechSynthesis` (with the legacy TTS_LIMITED warning
+  modal preserved as-is, not extended to he/ro/hu since that'd be a guess not a tested
+  fact), copy result, full-screen result modal, and translation history.
+- History is saved to `localStorage['tb_history']` — **same key the legacy
+  `public/index.html` app uses**. Since the React preview is same-origin
+  (`talk-bridge.org`), this shares history with the classic app rather than starting a
+  disconnected list. No migration needed.
+- New shared infra (in `web/src/components/`), meant to be reused by every later tab
+  rather than rebuilt each phase: `Toast.jsx` (`ToastProvider`/`useToast`, replaces the
+  legacy global `showToast()`) and `Modal.jsx` (generic modal shell, used here for the
+  full-screen result view and the TTS-support warning).
+- **Scope decision, worth knowing so it's not re-litigated:** the three behavior toggles
+  (auto-translate, save-history, extended-listen mode) live as local component state in
+  `Translate.jsx`, not in a Settings tab. Settings isn't its own migration phase yet
+  (checked `MIGRATION_PLAN.md` — only Translate/Camera/Documents/GroupChat/VideoCall/
+  Cutover are phases), and building it out prematurely would be scope creep. This is
+  actually still full behavioral parity: verified in `public/index.html` that the legacy
+  app never persisted these toggles either (plain `onclick` class-toggles, no
+  `localStorage` read/write) — they silently reset to the same defaults (all three ON)
+  on every page load there too. If/when a Settings tab phase happens, these three should
+  move there.
+- **Also worth knowing:** `server.js`'s backend `LANG_NAMES` map (used to build the
+  Claude prompt) only has the original 26 languages, not he/ro/hu. Not a blocker — it
+  falls back to `LANG_NAMES[tgtLang] || tgtLang`, so Hebrew/Romanian/Hungarian requests
+  still send the raw ISO code (`he`/`ro`/`hu`) to Claude, which understands them fine —
+  but the prompt would read slightly cleaner with full names added. Minor, non-blocking,
+  not done this session; flagging as a possible small follow-up.
+- **Verified in this sandbox:** `npm run build` succeeds, `oxlint` clean (one expected
+  `react/only-export-components` fast-refresh warning in `Toast.jsx` — harmless, that
+  file intentionally exports both the provider component and the `useToast` hook).
+  Headless-browser smoke test (Playwright against `vite preview`) confirmed: no
+  console/page errors, both language dropdowns render all 29 languages (59 total
+  `<option>`s across both selects), the 3 behavior checkboxes render, and clicking swap
+  while source is Auto-Detect correctly shows the "Can't swap Auto-Detect" toast.
+- **NOT yet verified:** an actual live `/api/translate` call — this sandbox has no
+  `ANTHROPIC_API_KEY`/backend running, so the translate round-trip itself has only been
+  code-reviewed against `server.js`, not exercised. **This must be tested for real once
+  deployed to Apollo1** — type text, hit Translate, confirm a real translation comes
+  back, before calling Phase 1 done.
+- **Not yet deployed to Apollo1.** Still needs: patch handed to user → `git am` on
+  Apollo1 in both `~/GEEMACK` and `~/GeeMack` (keep them in sync per `CLAUDE.md`) →
+  `cd web && npm install && npm run build` → `cp -r dist/* /var/www/talkbridge-react/`
+  (still a manual step, per the note in the previous entry — `deploy.sh` doesn't
+  automate the React app's build/copy yet) → reload if needed → verify live at
+  `https://talk-bridge.org/react-preview/`.
+
+**Next session (or rest of this one) should — in this exact order:**
+1. Get this Phase 1 commit deployed to Apollo1 and confirm `https://talk-bridge.org/react-preview/`
+   shows the working Translate tab (not just the Phase 0 placeholder).
+2. **Do a real translate test**: type text, hit Translate, confirm an actual translated
+   result comes back from `/api/translate` (not just that the UI renders — the network
+   call itself hasn't been exercised outside a code review). Also spot-check mic input
+   and TTS listen in a real browser (Web Speech API can't be meaningfully tested
+   headless).
+3. If Phase 1 checks out, move to Phase 2 (Camera OCR tab) per `MIGRATION_PLAN.md`.
+4. Do NOT re-ask about the video-call translation bug — confirmed fixed by the user
+   today, see entry above. Do NOT re-litigate the Settings-toggle scope decision above
+   (toggles live in Translate.jsx for now, by design) or the `server.js` LANG_NAMES gap
+   (known, non-blocking, optional future fix).
