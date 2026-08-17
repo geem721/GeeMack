@@ -517,3 +517,102 @@ separate issues, both fixed this session:
 **Next: wait for the user to test the remaining formats (CSV/PPTX/XLSX/EPUB/MD/RTF/ODT)
 against the live site with the test bundle sent this session, then decide whether Phase 3
 is fully done or needs another fix round, before moving to Phase 4 (Group Chat).**
+
+---
+
+## 2026-08-17/18 — Session end: Phases 1-3 built, deployed, and live-tested. Calling Phase 3 complete pending final format results tomorrow.
+
+**This was a long, productive session. Full arc, in order:**
+
+1. **Resolved the one open item from the previous session**: the original user-reported
+   "translation only ever comes out in Spanish" bug. User confirmed via real cross-device
+   video-call testing that it's fixed. Root cause (from the prior session) was never
+   translation logic — it was a broken deploy pipeline (cron running `deploy.sh`
+   non-interactively with `sudo` calls that silently failed every 5 minutes). This thread
+   is closed. **Do not re-investigate it.**
+
+2. **Phase 1 — Translate tab.** Built full React implementation: language selects (source
+   w/ auto-detect + target, shared 29-language list), swap, mic input (Web Speech API),
+   TTS playback, copy/full-screen result, translation history (shared `localStorage`
+   key with the legacy app). New shared infra: `Toast.jsx`, `Modal.jsx`. Deployed,
+   confirmed working live with a real translation. Along the way, found and fixed a real
+   backend issue: `deploy.sh` was calling `pm2 restart talkbridge` **unconditionally on
+   every 5-minute cron run**, causing transient 502s — rewrote it to only restart when
+   `git pull` actually brings in a new commit. Verified fixed.
+
+3. **Phase 2 — Camera OCR tab.** Live camera preview (back/front toggle), capture,
+   Tesseract.js OCR (loaded via pinned CDN script, not npm — its worker/wasm pipeline
+   doesn't bundle cleanly with Vite), translate. Refactored shared UI primitives out of
+   `Translate.css` into a new `shared.css` so tabs don't silently depend on each other's
+   stylesheets. Deployed, **confirmed working live** by the user testing multiple target
+   languages including Russian.
+
+4. **Phase 3 — Documents tab.** Before building, discovered the legacy Documents tab's
+   UI advertised PDF/DOCX/XLSX/PPTX/EPUB/ODT support, but the actual code just read every
+   non-image file as raw UTF-8 text — garbage for real binary formats. Surfaced this to
+   the user rather than silently porting the bug; their answer was explicit: **"we have
+   to fix it. IF it's included it has to work."** Built real parsers for every advertised
+   format (pdf.js for PDF, mammoth for DOCX, SheetJS for XLSX, JSZip-based extraction for
+   PPTX/EPUB/ODT/ODS/ODP, a proper brace-depth-aware mini-parser for RTF), with legacy
+   `.doc`/`.ppt` (pre-2007 binary Office formats) deliberately failing with a clear
+   "not supported" message instead of silently producing garbage — no practical
+   client-side parser exists for those. Verified thoroughly in-sandbox against real
+   generated test files for all 11 formats before ever deploying.
+   - **Deployed, then live-tested by the user with a real PDF, which surfaced two more
+     real bugs** (impossible to catch in the sandbox — no camera/backend there):
+     - nginx was serving `.mjs` files as `application/octet-stream` instead of
+       JavaScript (`/etc/nginx/mime.types` predates that extension — a common, generic
+       nginx gotcha), which broke pdf.js's worker module. Fixed by adding `mjs` to the
+       existing `application/javascript` line in `/etc/nginx/mime.types`. This is a
+       global nginx config change, not in git.
+     - `server.js`'s `/api/translate` had `max_tokens: 1000` hardcoded, too tight for
+       ~3000-character document chunks — the model's response was getting cut off
+       mid-JSON, and the server's own fallback path was dumping the raw truncated JSON
+       into the UI as if it were the translation. Fixed by bumping to `4096`. This is a
+       real git-tracked fix (`server.js`), deployed and confirmed live.
+   - **Both fixes verified working live**: the same PDF that previously failed to parse,
+     then produced truncated JSON, now translates cleanly end-to-end (confirmed with a
+     full Japanese translation of the multi-page document — clean output, no JSON
+     leakage, no truncation, despite being long enough to need multiple chunks).
+   - Sent the user a bundle of real test files (CSV/PPTX/XLSX/EPUB/MD/RTF/ODT) generated
+     in-sandbox (`python-docx`/`openpyxl`/`python-pptx`/`odfpy`, manual EPUB zip
+     construction) to test the remaining formats against the live site — **this testing
+     is happening offline and results will be reported next session.**
+
+**Where things stand right now:**
+- Phases 1, 2, and 3 are all built, deployed to Apollo1, and live at
+  `https://talk-bridge.org/react-preview/`.
+- Phase 1 and 2: fully confirmed working live, no open issues.
+- Phase 3: PDF confirmed working live end-to-end (extraction + translation, including a
+  long multi-chunk document). CSV/PPTX/XLSX/EPUB/MD/RTF/ODT were sent as a test bundle but
+  **not yet confirmed** — user is testing offline, will report back. **User's explicit
+  instruction: treat this as a complete rollout unless tomorrow's testing proves
+  otherwise** — don't block on re-confirming what's already been verified, but do listen
+  for and act on whatever the user reports about the remaining formats.
+- `web/dist` → `/var/www/talkbridge-react/` is still a **manual** rebuild+copy step after
+  any `web/` change (not yet automated in `deploy.sh` — deliberately deferred, needs
+  proper design so it doesn't add an unconditional `npm run build` to a job firing every
+  5 minutes forever).
+
+**Tomorrow's session should start here, in this order:**
+1. **Ask the user for the results of their offline CSV/PPTX/XLSX/EPUB/MD/RTF/ODT testing
+   first, before doing anything else.** If all good, Phase 3 is fully closed — say so and
+   move on. If something's broken, treat it like the PDF issues were handled tonight:
+   research the actual cause (check real files/logs, don't guess), fix, deploy, verify
+   live, log.
+2. Once Phase 3 is confirmed (or issues from it are resolved), move to **Phase 4 (Group
+   Chat)** per `MIGRATION_PLAN.md`: Firebase-backed realtime chat, rooms, presence,
+   invites, per-message live translation (text chat portion only — Video Call is its own
+   tab, Phase 5).
+3. Do NOT re-verify Phases 1-2 further, do NOT re-litigate the Documents-tab parsing
+   library choices or the `.doc`/`.ppt` scope line, do NOT re-diagnose the nginx
+   `mime.types` or `max_tokens` fixes — all done, deployed, and verified working live
+   tonight.
+4. Remember: `cd ~/GeeMack` **before** running `git am` — this tripped up two separate
+   deploys this session (ran from `~` by mistake both times) before being caught and
+   corrected. Always confirm with `pwd` before applying a patch if there's any doubt.
+
+Great session — three full phases shipped, deployed, and real-world tested in one sitting,
+plus three separate backend/infra bugs found and fixed along the way (cron restart storm,
+nginx MIME type, API token truncation). Picking back up tomorrow with the Documents
+format-testing results.
