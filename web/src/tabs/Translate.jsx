@@ -4,26 +4,8 @@ import { useToast } from "../components/Toast.jsx";
 import Modal from "../components/Modal.jsx";
 import { useTranslationHistory } from "../hooks/useTranslationHistory.js";
 import { callTranslate } from "../api/translate.js";
+import { SPEECH_LANG_MAP, speakWithCheck as speakWithTtsCheck } from "../utils/speech.js";
 import "./Translate.css";
-
-// Browsers with tested-limited/no native TTS voices for these languages, carried over
-// unchanged from the legacy app's TTS_LIMITED set (public/index.html). Not extended to
-// he/ro/hu (new in the shared 29-language list) since that would be a guess rather than
-// an observed fact — revisit if real usage shows silent audio for those.
-const TTS_LIMITED = new Set([
-  "ar", "hi", "sw", "tr", "vi", "th", "uk", "id", "fa", "bn", "ur", "ko",
-]);
-
-// BCP-47 tags for SpeechRecognition.lang / SpeechSynthesisUtterance.lang. Extends the
-// legacy app's CAPTION_LANG_MAP (26 languages) with he/ro/hu for the shared 29-language
-// list from Phase 0.
-const SPEECH_LANG_MAP = {
-  en: "en-US", es: "es-ES", fr: "fr-FR", de: "de-DE", it: "it-IT", pt: "pt-BR",
-  zh: "zh-CN", ja: "ja-JP", ko: "ko-KR", ar: "ar-SA", ru: "ru-RU", hi: "hi-IN",
-  sw: "sw", nl: "nl-NL", pl: "pl-PL", tr: "tr-TR", vi: "vi-VN", th: "th-TH",
-  uk: "uk-UA", id: "id-ID", fa: "fa-IR", bn: "bn-BD", el: "el-GR", sv: "sv-SE",
-  cs: "cs-CZ", ur: "ur-PK", he: "he-IL", ro: "ro-RO", hu: "hu-HU",
-};
 
 export default function Translate() {
   const { showToast } = useToast();
@@ -121,27 +103,20 @@ export default function Translate() {
     navigator.clipboard.writeText(result.translation).then(() => showToast("Copied!"));
   }
 
-  function speakWithCheck(text, langCode, langLabelText) {
-    if (!window.speechSynthesis) {
-      showToast("TTS not supported");
-      return;
-    }
-    if (!text) {
-      showToast("Nothing to speak");
-      return;
-    }
-    const doSpeak = () => {
-      speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = SPEECH_LANG_MAP[langCode] || langCode;
-      speechSynthesis.speak(utterance);
-      showToast("Speaking…");
-    };
-    if (TTS_LIMITED.has(langCode)) {
-      setAudioWarning({ label: langLabelText, onProceed: doSpeak });
-    } else {
-      doSpeak();
-    }
+  function handleSpeak(text, langCode, langLabelText) {
+    const outcome = speakWithTtsCheck(text, langCode, {
+      onWarn: (proceed) =>
+        setAudioWarning({
+          label: langLabelText,
+          onProceed: () => {
+            proceed();
+            showToast("Speaking…");
+          },
+        }),
+    });
+    if (outcome === "unsupported") showToast("TTS not supported");
+    else if (outcome === "empty") showToast("Nothing to speak");
+    else if (outcome === "spoke") showToast("Speaking…");
   }
 
   function speakResult() {
@@ -149,7 +124,7 @@ export default function Translate() {
       showToast("Nothing to speak");
       return;
     }
-    speakWithCheck(result.translation, tgtLang, languageLabel(tgtLang));
+    handleSpeak(result.translation, tgtLang, languageLabel(tgtLang));
   }
 
   function openFullScreen() {
@@ -374,7 +349,7 @@ export default function Translate() {
             </button>
             <button
               className="btn btn-secondary"
-              onClick={() => speakWithCheck(result.translation, tgtLang, languageLabel(tgtLang))}
+              onClick={() => handleSpeak(result.translation, tgtLang, languageLabel(tgtLang))}
             >
               🔊 Speak
             </button>

@@ -371,3 +371,105 @@ fixed, see above.
   drag/drop or file-picker upload, multi-format parsing, chunked translation,
   feature-parity with today's Documents tab.
 - Do NOT re-verify Phase 2 further — confirmed fixed, see above.
+
+**Update, same session — Phase 3 built (Documents tab), real parsing added:**
+
+- **Important finding before building, confirmed by reading the legacy JS (not
+  assumed)**: the legacy Documents tab (`public/index.html`) advertises PDF/DOCX/XLSX/
+  PPTX/EPUB/ODT/etc. support via its UI (format-tag pills, file-picker `accept` list),
+  but its actual code only ever calls `FileReader.readAsText(file, 'UTF-8')` on every
+  non-image file. That's fine for genuinely plain-text formats (TXT/MD/CSV/HTML/RTF) but
+  produces garbled binary noise for real binary formats (PDF/DOCX/XLSX/PPTX/EPUB/ODT),
+  which then gets silently "translated" into nonsense. There is no PDF/Office parsing
+  library anywhere in the legacy app.
+- **Surfaced this to the user before building** rather than silently porting the bug or
+  silently fixing it. User's answer, verbatim: **"we have to fix it. IF it's included it
+  has to work."** So Phase 3 adds real parsing, not just a parity port.
+- **New `web/src/utils/documentParsers.js`** dispatches by file extension to a real
+  extractor per format:
+  - **PDF** → `pdfjs-dist` (per-page `getTextContent()`, joined). Note:
+    `pdfjs-dist@^6` (the version `npm install` grabbed by default) crashed in this
+    sandbox's Chromium 141 with `s.getOrInsertComputed is not a function` — a real
+    incompatibility, not a red herring (verified via a from-scratch Playwright repro
+    with console/pageerror capture). **Pinned down to `pdfjs-dist@4.10.38`**, which
+    works correctly; confirmed via headless test with a real PDF (converted from a
+    `.docx` via `libreoffice --headless`). Worth knowing if a future `npm install`
+    bumps this again and PDF parsing breaks.
+  - **DOCX** → `mammoth.extractRawText()`.
+  - **XLSX/XLS** → SheetJS (`xlsx` package), each sheet converted via
+    `sheet_to_csv` and joined with a `# SheetName` header per sheet.
+  - **PPTX** → no good lightweight browser PPTX-text library exists, so this unzips the
+    file with `jszip` and pulls text runs (`<a:t>`) directly out of
+    `ppt/slides/slideN.xml`, in slide order.
+  - **EPUB** → also handled via `jszip`: reads `META-INF/container.xml` → the OPF
+    manifest/spine → each chapter XHTML in reading order → extracts visible text.
+  - **ODT/ODS/ODP** (OpenDocument) → `jszip` + `content.xml` text extraction (walks all
+    text nodes; doesn't preserve table/slide structure, but that's fine for translation
+    purposes).
+  - **HTML/XHTML/ODF XML** text extraction inserts line breaks at block-level tags
+    (`p`, `div`, `h1-h6`, ODF's `text:p`/`text:h`/`list-item`, etc. — matched by
+    `localName` so XML namespace prefixes don't matter) so e.g. a heading and the
+    paragraph after it don't get glued into one run ("TitleThe quick brown fox…").
+    Verified this was actually a problem and fixed it, not just assumed.
+  - **RTF** → a small brace-depth-aware mini-parser (not full RTF spec, but correct
+    where a first-pass pure-regex version wasn't): a regex-only attempt let font/color
+    table names (`Arial;` etc.) leak into the output because those live in nested
+    `{\fonttbl{...}}` groups that regex can't reliably balance. Rewrote as a proper
+    walk that tracks brace depth and skips known non-content destination groups
+    (`fonttbl`, `colortbl`, `stylesheet`, `info`, `generator`, `pict`, `object`, plus
+    any `\*`-marked generic destination). Verified against both a hand-built
+    pretty-printed test RTF and a realistic single-line one.
+  - **TXT/MD/CSV** → unchanged, plain `readAsText` (these already worked correctly).
+  - **Images** → unchanged, Tesseract OCR (same as before, same as Camera OCR).
+  - **Legacy binary `.doc`/`.ppt`** (pre-2007 OLE compound file formats) → deliberately
+    **not** parsed — there's no practical client-side parser for those without a WASM
+    LibreOffice-scale dependency, which is out of proportion for this migration. Rather
+    than silently feeding garbage through `readAsText` like the legacy app effectively
+    did, these now fail with a clear error: *"Legacy .doc format isn't supported —
+    please save/export as .docx and try again"* (same for .ppt/.pptx). This is a
+    deliberate scope line, not an oversight — flagging in case it needs revisiting.
+  - Unknown/unanticipated extensions fall back to plain-text reading, same as the
+    legacy app's implicit behavior.
+- Every parser library (`pdfjs-dist`, `mammoth`, `xlsx`, `jszip`) is **dynamically
+  imported** — only loaded when a file of that type is actually opened — so the main
+  app bundle isn't bloated for tabs/files that never touch them. Confirmed via build
+  output: main bundle is ~223KB, the heavy parser chunks (up to ~424KB for `xlsx`,
+  ~1.3MB for the pdf.js worker) are separate lazy chunks.
+- Same per-tab local-state scope decision as Phases 1-2: no new Settings-tab
+  dependency introduced.
+- Refactored shared TTS logic (`TTS_LIMITED`, `SPEECH_LANG_MAP`, `speakWithCheck`) out
+  of `Translate.jsx` into `web/src/utils/speech.js`, since Documents needs the same
+  "speak with limited-language warning" behavior for its translation result.
+- Documents tab reuses the same generic `Modal.jsx`/`Toast.jsx` infra from Phases 1-2,
+  and adds one new action the other tabs don't have: **Save to Device** (downloads the
+  translated text as a `.txt` file via a `Blob` + anchor download), matching the legacy
+  app's `saveModalToDevice()`.
+- **Verified thoroughly in this sandbox** (this phase had a real, previously-hidden bug
+  to catch, so verification went further than Phases 1-2's smoke tests): generated real
+  test files for all 11 advertised formats (TXT, MD, CSV, HTML, RTF, DOCX, XLSX, PPTX,
+  ODT, PDF, EPUB — via `python-docx`/`openpyxl`/`python-pptx`/`odfpy` and
+  `libreoffice --headless` for the PDF), uploaded each through a headless-browser
+  Playwright test against the real built app, and confirmed every single one extracts
+  clean, correct, readable text — not garbage. Also verified `.doc`/`.ppt` now show the
+  clear unsupported-format error instead of silently producing garbage.
+- `npm run build` succeeds, `oxlint` clean (same expected `Toast.jsx` fast-refresh
+  warning as Phases 1-2).
+- **NOT yet verified**: the actual `/api/translate` round-trip on extracted document
+  text, and the chunked-translation flow for documents longer than 3000 characters —
+  this sandbox has no backend. Needs a real test on Apollo1.
+- **Not yet deployed to Apollo1.**
+
+**Next session (or rest of this one) should — in this exact order:**
+1. Deploy this commit to Apollo1 (patch → `git am` in both clones, **being careful to
+   `cd ~/GeeMack` first** — this has been the recurring mistake this session — → `git
+   push` → `cd ~/GEEMACK && git pull` → `cd ~/GeeMack/web && npm install && npm run
+   build` → `cp -r dist/* /var/www/talkbridge-react/`).
+2. **Real test**: upload a real PDF, DOCX, and XLSX (the three most common formats) on
+   Apollo1 and confirm the extracted text and the translated result both look right —
+   this sandbox verified extraction thoroughly but never exercised the real
+   `/api/translate` call on document text.
+3. If Phase 3 checks out, move to Phase 4 (Group Chat) per `MIGRATION_PLAN.md`.
+4. Do NOT re-litigate the parsing-library choices, the pdfjs-dist version pin (`4.10.38`
+   — the default `^6` crashes in at least this environment), the RTF mini-parser, or the
+   .doc/.ppt scope line — all deliberate, documented above, and actually verified against
+   real files, not assumed to work.

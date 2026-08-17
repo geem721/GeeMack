@@ -32,7 +32,7 @@ export default function App() {
       <div className="app-shell">
         <header className="app-header">
           <span className="app-title">TalkBridge</span>
-          <span className="app-subtitle">React rebuild — Phase 2: Camera OCR tab</span>
+          <span className="app-subtitle">React rebuild — Phase 3: Documents tab</span>
         </header>
 
         <nav className="tab-nav">
