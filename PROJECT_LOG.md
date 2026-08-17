@@ -357,3 +357,17 @@ fixed, see above.
 3. If Phase 2 checks out, move to Phase 3 (Documents tab) per `MIGRATION_PLAN.md`.
 4. Do NOT re-litigate the shared.css refactor, the fixed-Tesseract-language-string
    quirk, or the CDN-vs-npm choice for Tesseract.js — all deliberate, documented above.
+
+**Update, same session — Phase 2 confirmed working live:**
+
+- User tested the live Camera OCR tab for real (camera capture + OCR + translate),
+  including translating to Russian and other languages. Result, verbatim: "Everything in
+  the Camera translation works. I tried translating to different languages including
+  Russian ands they work." **Phase 2 is confirmed working end-to-end**, not just
+  code-reviewed/smoke-tested.
+- No issues reported this time (unlike Phase 1's transient 502s, which were already fixed
+  before this test).
+- **Phase 2 is done. Ready to start Phase 3 (Documents) next**, per `MIGRATION_PLAN.md` —
+  drag/drop or file-picker upload, multi-format parsing, chunked translation,
+  feature-parity with today's Documents tab.
+- Do NOT re-verify Phase 2 further — confirmed fixed, see above.
