@@ -273,3 +273,34 @@ fixed (this is the important part of today):**
    today, see entry above. Do NOT re-litigate the Settings-toggle scope decision above
    (toggles live in Translate.jsx for now, by design) or the `server.js` LANG_NAMES gap
    (known, non-blocking, optional future fix).
+
+**Update, same session — Phase 1 confirmed working live + cron restart-storm fixed:**
+
+- User tested the live Translate tab in a real browser at `https://talk-bridge.org/react-preview/`
+  (screenshot evidence): typed English text, hit Translate, got a correctly detected
+  "English" source and a real Chinese translation back from `/api/translate`. **Phase 1
+  is confirmed working end-to-end**, not just code-reviewed.
+- Console showed two `Failed to load resource: 502` errors on `api/translate` before the
+  successful one. Root cause: `deploy.sh` was calling `pm2 restart talkbridge`
+  **unconditionally on every cron run** (every 5 minutes, `↺` restart counter was at 3466
+  when checked), which briefly drops the backend and can 502 any in-flight request. This
+  is exactly the risk flagged as a "future improvement" in an earlier entry, now actually
+  observed causing a real (if transient) user-facing error.
+- **Fixed**: rewrote `/home/geem721/deploy.sh` to capture `git rev-parse HEAD` before and
+  after `git pull`, and only `cp`/`pm2 restart` when the hash actually changed — otherwise
+  it just logs "No changes" and leaves the running process alone. Old version backed up as
+  `~/deploy.sh.bak2` (the original pre-ownership-fix version is separately at
+  `~/deploy.sh.bak`). Verified by running it manually right after the swap: printed
+  "Already up to date." → "No changes: <timestamp>" with **no** `pm2` restart triggered —
+  confirmed correct behavior. Cron (`*/5 * * * *`) will pick up the new script on its next
+  run automatically, no crontab change needed since it just calls the same path.
+- This does **not** yet cover `web/` — the React app's build/copy to
+  `/var/www/talkbridge-react/` is still a fully manual step every phase (unchanged from
+  the Phase 0 note). Only the legacy `public/index.html` deploy path got the
+  restart-storm fix. Worth automating `web/` the same way in a future session, but out of
+  scope for right now.
+
+**Phase 1 is done. Ready to start Phase 2 (Camera OCR) next**, per `MIGRATION_PLAN.md` —
+live camera feed, capture + OCR + translate, feature-parity with today's Camera OCR tab.
+Do NOT re-verify Phase 1 further or re-investigate the 502s — both are closed, confirmed
+fixed, see above.
