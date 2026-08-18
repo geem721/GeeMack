@@ -6,6 +6,44 @@ Read this (and `MIGRATION_PLAN.md`) before starting any work in this repo — se
 
 ---
 
+## 2026-08-18 (session, continued) — Phase 4 confirmed working live; Phase 4 is done
+
+Deployed the Phase 4 patch (commit `397d9fa`) to Apollo1 — `git am`, `git push`,
+`~/GEEMACK` synced, `npm install && npm run build`, `dist/` copied to
+`/var/www/talkbridge-react/`. No `pm2 restart` needed (no `server.js` changes).
+
+User tested live with two real accounts (`geem721@outlook.com` and `geem721@gmail.com`),
+both signed up and email-verified through the new `AuthGate`. Results, confirmed by
+screenshots:
+
+- **Sign-in gate works**: only Group Chat required an account; Translate/Camera/
+  Documents were untouched, per the confirmed auth-scope decision.
+- **Messaging works**: both accounts sent and received messages in `#general` in
+  real time.
+- **Presence works**: online count updated correctly as the second account joined (1 → 2
+  online).
+- **Live per-message translation confirmed working**: with one account's "I write in"
+  set to Spanish, `"Hola. Como Esta"` rendered on the English-reading side as `🌐 Hello.
+  How are you?`, and `"Donde es su Casa. Tu vive in este ciudad?"` as `🌐 Where is your
+  house? Do you live in this city?` — the translation line only appears when sender and
+  reader are on different languages, exactly as designed.
+- **Invite links work**: opening a `?room=general` link (copied via the Invite button)
+  in a new tab dropped the second account straight into the right room with the Group
+  Chat tab already active.
+
+No bugs found. **Phase 4 is genuinely done** — every acceptance criterion in
+`MIGRATION_PLAN.md` (feature parity with legacy Group Chat, minus the deliberate
+whole-app-gating narrowing) is verified live, not just in the sandbox.
+
+**Next: Phase 5 (Video Call)** — LiveKit video/audio as its own top-level tab (already
+promoted out of Group Chat per the 2026-08-16 decision), Deepgram live captions relayed
+through `/ws/transcribe`, per-listener translated caption overlays, and call recording
+(the restored/reimagined Record feature). Reuses `AuthGate` for sign-in (see prior entry
+this session — Video Call needs `currentUser` just as much as Group Chat does) and the
+same room concept Group Chat already established. Not started yet.
+
+---
+
 ## 2026-08-18 (session, continued) — Phase 4: Group Chat tab built, auth-scope decision made
 
 **Context:** Picked back up after confirming the tool-use fix (previous entry) resolved
