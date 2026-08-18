@@ -37,11 +37,6 @@
   font-weight: 700;
 }
 
-.app-subtitle {
-  font-size: 12px;
-  color: #8b93a8;
-}
-
 .tab-nav {
   display: flex;
   flex-wrap: wrap;

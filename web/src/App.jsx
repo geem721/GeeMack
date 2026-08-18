@@ -59,7 +59,6 @@ export default function App() {
       <div className="app-shell">
         <header className="app-header">
           <span className="app-title">TalkBridge</span>
-          <span className="app-subtitle">React rebuild — Phase 5: Video Call tab</span>
         </header>
 
         <nav className="tab-nav">
