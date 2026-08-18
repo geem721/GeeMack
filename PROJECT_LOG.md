@@ -6,6 +6,38 @@ Read this (and `MIGRATION_PLAN.md`) before starting any work in this repo — se
 
 ---
 
+## 2026-08-18 (session, continued) — Phase 5 (Video Call) fully confirmed live: video, audio, and captions all working
+
+All three pieces of Video Call are now explicitly confirmed working in real two-account,
+two-device testing (laptop + phone, matching this project's established testing
+practice):
+
+- **Video**, both directions — confirmed earlier this session (grid-mount fix).
+- **Captions**, translated, both directions — confirmed after the diagnostic-logging
+  patch (previous entry) was deployed. The diagnostics were never needed to find a bug
+  to fix — captions started working on retest, so whatever was wrong was either
+  transient (e.g. mid-reconnect-bounce timing) or the earlier "not showing up" report
+  coincided with the connect/disconnect/reconnect cycle already discussed in the video
+  bug #2 entry. The `[caption]` logging is harmless and left in place — cheap insurance
+  if this ever intermittently breaks again, no need to re-add it from scratch.
+- **Audio**, both directions — confirmed via a real-world test: user played TV audio
+  near the laptop, walked the phone to another room, could hear it over the call, then
+  reversed which device was near the TV. Both directions clear.
+
+**Phase 5 is done.** Per the user's own decision earlier this session (verify Video Call
+fully before touching cutover), Phase 6 (cutover) is now unblocked.
+
+**Next:** Phase 6 — point `talk-bridge.org`'s main URL at the React build (currently only
+reachable at the `/react-preview/` subpath via a separate nginx `alias` block — see the
+Phase 0 entries below for how that block is written), retire `public/index.html` from
+being served (kept in git history, not deleted), and do a final verification pass across
+every tab. The main-site nginx block's exact current content hasn't been re-checked
+this session (only `/react-preview/`'s block is documented in this log) — get the real
+current config (`sudo nginx -T`) before editing anything there, same discipline used
+when `/react-preview/` was first set up, rather than assuming its shape.
+
+---
+
 ## 2026-08-18 (session, continued) — Phase 5 captions: intermittent, added diagnostics instead of guessing a fix
 
 User's live testing of captions has been inconsistent across rounds: first confirmed
