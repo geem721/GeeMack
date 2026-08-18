@@ -6,6 +6,56 @@ Read this (and `MIGRATION_PLAN.md`) before starting any work in this repo — se
 
 ---
 
+## 2026-08-18 (session end) — Phase 6 (cutover) deployed; pending user's own overnight verification pass
+
+**Where things stand:** `talk-bridge.org` now serves the React app directly at the
+domain root (commit `d5249ca`, confirmed via `curl` showing root-relative asset paths —
+`/assets/index-Bv0g6rGJ.js`, no `/react-preview/` prefix). `public/index.html` is no
+longer reachable through nginx (kept in git history, not deleted, per
+`MIGRATION_PLAN.md`). The `/react-preview/` staging subpath now explicitly 404s. This
+is the first time the React rebuild has been the thing real users actually hit at
+`talk-bridge.org/` — treat any next-session bug report about "the app" as being about
+this build, not the legacy one.
+
+**Important process note for next session, or if picking this back up tonight:** four
+patches got queued up today (caption diagnostics, the Phase 5 completion log, the Vite
+base-path change for cutover, and the header cleanup) and were handed to the user in the
+usual way, but they silently did NOT land on Apollo1 for a while — `HEAD` sat at an
+older commit despite the user appearing to proceed through the deploy steps. This wasn't
+caught until a fresh/incognito browser load produced a genuinely blank page and `curl`
+(which bypasses browser cache entirely) showed the live `index.html` still referencing
+old `/react-preview/`-prefixed asset paths. **Lesson: after handing over a patch, don't
+assume it landed — ask for `git log --oneline` output and actually look at the hash/
+subject before treating any later step (build, deploy, nginx change) as safe to build
+on.** Separately, pasting a raw patch directly into the bash prompt (rather than into a
+file) fails with a wall of "command not found" errors, since bash tries to execute each
+line — the reliable pattern that worked today was a heredoc pasted as one block:
+`cat > ~/name.patch << 'EOF' ... EOF`, safer than relying on the user to correctly use
+`nano` (open, paste, save, exit) for every patch. Prefer heredocs going forward for any
+patch under the terminal's paste-size comfort zone.
+
+All four patches are now applied and confirmed on Apollo1 (`~/GeeMack` HEAD `d5249ca`,
+`~/GEEMACK` in sync), built, and copied to `/var/www/talkbridge-react/`. The nginx site
+config was also updated this session (root now `/var/www/talkbridge-react`, `/` falls
+back to `index.html` for SPA routing, `/react-preview/` explicitly returns 404) — this
+change lives only in `/etc/nginx/sites-enabled/talkbridge` on Apollo1, not in git, same
+as every other nginx change in this project's history.
+
+**What's NOT done yet:** user did a preliminary pass (loaded the app fresh, header
+subtitle gone, no obvious errors) and is doing a full evening testing pass across every
+tab before calling Phase 6 truly done. **Next session should ask what that testing
+turned up before doing anything else** — if something broke, fix it; if it's all clean,
+Phase 6 can be marked complete in this log and `MIGRATION_PLAN.md`'s checklist, and then
+move to the next thing the user's explicitly excited about: scoping the "phone piece"
+(a Twilio integration was mentioned, unconfirmed) — this needs real research (pricing,
+how it'd actually integrate alongside the existing LiveKit/Firebase/Deepgram stack,
+whether it's a new phase or extends Video Call) before proposing anything, not a guess
+from priors, per this project's standing "research before proposing" rule. Nothing
+about the phone piece has been investigated yet — don't assume Twilio without checking
+it's actually the right fit and cost first.
+
+---
+
 ## 2026-08-18 (session, continued) — Phase 5 (Video Call) fully confirmed live: video, audio, and captions all working
 
 All three pieces of Video Call are now explicitly confirmed working in real two-account,
