@@ -25,7 +25,7 @@ app.post('/api/translate', async (req, res) => {
     ar:'Arabic', ru:'Russian', hi:'Hindi', sw:'Swahili', nl:'Dutch',
     pl:'Polish', tr:'Turkish', vi:'Vietnamese', th:'Thai', uk:'Ukrainian',
     id:'Indonesian', fa:'Persian', bn:'Bengali', el:'Greek', sv:'Swedish',
-    cs:'Czech', ur:'Urdu'
+    cs:'Czech', ur:'Urdu', he:'Hebrew', ro:'Romanian', hu:'Hungarian'
   };
 
   const srcName = LANG_NAMES[srcLang] || srcLang;
@@ -33,13 +33,33 @@ app.post('/api/translate', async (req, res) => {
   const autoDetect = srcLang === 'auto';
 
   const systemPrompt = autoDetect
-    ? `You are a professional translator with auto language detection. When given text:
-1. First detect the source language
-2. Translate to ${tgtName}
-3. Respond ONLY in this exact JSON format (no markdown, no extra text):
-{"detected":"<ISO language code>","detectedName":"<Full language name>","translation":"<translated text>"}`
-    : `You are a professional translator. Translate from ${srcName} to ${tgtName}. Respond ONLY in this exact JSON format (no markdown, no extra text):
-{"detected":"${srcLang}","detectedName":"${srcName}","translation":"<translated text>"}`;
+    ? `You are a professional translator with auto language detection. Detect the source language of the given text and translate it to ${tgtName}. Call the provide_translation tool with the result.`
+    : `You are a professional translator. Translate the given text from ${srcName} to ${tgtName}. Call the provide_translation tool with the result.`;
+
+  // Structured output via tool-use, not hand-written JSON in free text. The earlier
+  // version asked the model to "respond ONLY in this exact JSON format" as plain text,
+  // then JSON.parse'd it with a fallback that dumped the raw text on failure. That broke
+  // in real use whenever a translation naturally contained a quotation mark (e.g.
+  // quoting a UI element name like "Documents") — the model doesn't reliably escape an
+  // internal `"` as `\"` in hand-written JSON, one unescaped quote breaks JSON.parse, and
+  // the raw near-JSON blob ends up displayed as the "translation" in the UI. Confirmed
+  // live across MD/ODT/PPTX/RTF in both Chinese and German — same root cause every time.
+  // Tool-use sidesteps the whole class of bug: the API parses/validates the arguments
+  // itself and hands back a real object, so there's no free-text JSON for an unescaped
+  // quote (or stray prose before/after the JSON) to break.
+  const TRANSLATE_TOOL = {
+    name: 'provide_translation',
+    description: 'Provide the translation result for the given text.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        detected: { type: 'string', description: 'ISO 639-1 code of the detected/source language' },
+        detectedName: { type: 'string', description: 'Full English name of the detected/source language' },
+        translation: { type: 'string', description: 'The translated text, in the target language' }
+      },
+      required: ['detected', 'detectedName', 'translation']
+    }
+  };
 
   try {
     const response = await fetch('https://api.anthropic.com/v1/messages', {
@@ -51,16 +71,13 @@ app.post('/api/translate', async (req, res) => {
       },
       body: JSON.stringify({
         model: 'claude-sonnet-4-6',
-        // Was 1000 — too tight once callers started sending up to ~3000-character
-        // document chunks (Phase 3's Documents tab). A translation into a more verbose
-        // target language plus the required JSON wrapper can exceed 1000 output tokens,
-        // which truncates the JSON mid-string; the parse then fails and the fallback
-        // path below dumps the raw, truncated model output as if it were the
-        // translation. Confirmed live: a real PDF chunk truncated mid-word ("Jede
-        // Ent...") with exactly this symptom. 4096 gives real headroom for a 3000-char
-        // chunk in any target language without being an unbounded blank check.
+        // 4096 gives real headroom for a ~3000-char document chunk in any target
+        // language without being an unbounded blank check (see prior session's fix for
+        // the truncation bug this was originally raised to 4096 for).
         max_tokens: 4096,
         system: systemPrompt,
+        tools: [TRANSLATE_TOOL],
+        tool_choice: { type: 'tool', name: 'provide_translation' },
         messages: [{ role: 'user', content: text }]
       })
     });
@@ -68,13 +85,20 @@ app.post('/api/translate', async (req, res) => {
     const data = await response.json();
     if (data.error) return res.status(500).json({ error: data.error.message });
 
-    const raw = data.content?.find(b => b.type === 'text')?.text || '{}';
-    try {
-      const parsed = JSON.parse(raw.replace(/```json|```/g, '').trim());
-      return res.status(200).json(parsed);
-    } catch {
-      return res.status(200).json({ detected: srcLang, detectedName: srcName, translation: raw });
+    const toolUse = data.content?.find(b => b.type === 'tool_use' && b.name === 'provide_translation');
+    if (toolUse?.input?.translation !== undefined) {
+      return res.status(200).json(toolUse.input);
     }
+
+    // Shouldn't normally happen with tool_choice forcing the tool call, but keep a
+    // safety net rather than a hard 500 if the API ever returns a plain text block
+    // instead (e.g. a refusal).
+    const raw = data.content?.find(b => b.type === 'text')?.text || '';
+    return res.status(200).json({
+      detected: srcLang,
+      detectedName: srcName,
+      translation: raw || '[No translation returned]'
+    });
   } catch (err) {
     console.error('Translate error:', err);
     return res.status(500).json({ error: err.message });

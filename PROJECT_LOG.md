@@ -616,3 +616,59 @@ Great session — three full phases shipped, deployed, and real-world tested in 
 plus three separate backend/infra bugs found and fixed along the way (cron restart storm,
 nginx MIME type, API token truncation). Picking back up tomorrow with the Documents
 format-testing results.
+
+---
+
+## 2026-08-18 — Real bug found via user's offline format testing: JSON leaking into translations, fixed with structured tool-use output
+
+User tested the remaining Phase 3 formats (CSV/PPTX/XLSX/EPUB/MD/RTF/ODT) plus two image
+files offline and reported back. Results:
+
+- **Real bug, consistent across every non-PDF format tested, in both Chinese and
+  German**: the translated-result box showed the full raw JSON blob
+  (`{"detected":"en","detectedName":"English","translation":"..."}`) instead of clean
+  translated text.
+- **Root cause** (confirmed by reading `server.js`, not guessed): the `/api/translate`
+  system prompt asked Claude to "Respond ONLY in this exact JSON format" as free text,
+  and the handler did a naive `JSON.parse()` on that text with a fallback that dumps the
+  raw text if parsing fails. In every failing case, the translation naturally included a
+  quotation mark — e.g. Chinese `测试"文档"选项卡` and German `im Reiter „Dokumente"`,
+  both from the model quoting the word "Documents" (a UI tab name) as a natural
+  translation choice — and the model didn't reliably escape that internal `"` as `\"`
+  inside the JSON string it hand-wrote. One unescaped quote breaks `JSON.parse`, which
+  throws, and the existing fallback path dumps the whole almost-valid JSON blob into the
+  UI as if it were the translation. This is a known general reliability problem with
+  asking a model to hand-write valid JSON as text — it isn't specific to Documents, and
+  **Translate (Phase 1) and Camera OCR (Phase 2) call this same endpoint and are equally
+  exposed**; they just hadn't hit a translation containing a quote mark during testing.
+- **Fixed properly, not patched around**: rewrote `/api/translate` to use Anthropic's
+  tool-use feature with a forced `tool_choice` instead of asking the model to write JSON
+  as text. Defined a `provide_translation` tool with an `input_schema` for
+  `detected`/`detectedName`/`translation`; the API itself parses and validates the
+  arguments and hands back a real object — there's no free-text JSON left for an
+  unescaped quote (or stray prose before/after the JSON, which was likely a second
+  failure mode — see below) to break. This eliminates the whole bug class rather than
+  attempting to regex-repair or re-escape the model's free text, which would be fragile.
+- **Also fixed in the same edit**: `LANG_NAMES` was missing `he`/`ro`/`hu` (flagged as a
+  minor, non-blocking gap in an earlier session's log entry) — added now since the file
+  was already open for this change.
+- **The two image files (`rover0710.jpg`, `zentoro.png`) are a different, non-bug
+  situation, worth being clear about**: Tesseract OCR extracted garbled/incoherent text
+  from them (decorative symbols, fragments, mixed scripts), and Claude correctly and
+  honestly reported that the input wasn't real translatable text rather than fabricating
+  a fake translation — that's the *correct* behavior, not a defect. They only looked like
+  "errors" because the same JSON-escaping bug above also corrupted how that honest
+  response got displayed. Once the tool-use fix is live, these should render as a clean
+  "unable to translate" message rather than raw JSON. If those two images were actually
+  expected to contain clear text, worth a second look with a better-quality source image,
+  but that's an OCR/image-quality question, not a code fix.
+- `node --check server.js` passes. **Not yet deployed or verified live** — this sandbox
+  has no `ANTHROPIC_API_KEY`, same limitation as the max_tokens fix yesterday. Needs a
+  real test on Apollo1 across the formats that failed (MD/ODT/PPTX/RTF, Chinese and
+  German at minimum) plus a spot-check on Translate and Camera OCR with text that
+  includes a quotation mark, since this fix covers all three tabs.
+
+**Next: deploy this patch (same drill — `cd ~/GeeMack` first, `git am`, `git push`,
+`cd ~/GEEMACK && git pull`, `pm2 restart talkbridge` since this changes `server.js`), then
+have the user re-test the formats that failed. Once confirmed, Phase 3 is genuinely done
+and Phase 4 (Group Chat) can start.**
