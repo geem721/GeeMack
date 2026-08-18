@@ -15,14 +15,13 @@ import { callTranslate } from "../api/translate.js";
 import { useToast } from "../components/Toast.jsx";
 import AuthGate from "../components/AuthGate.jsx";
 import { LANGUAGES } from "../languages.js";
+import { ROOMS } from "../rooms.js";
 import "./GroupChat.css";
 
 // Phase 4 of MIGRATION_PLAN.md. Feature-parity target: public/index.html's Group Chat
 // panel (Firebase Realtime Database rooms, presence, invite links, per-message live
-// translation). Room list and the room concept itself are shared with Video Call (Phase
-// 5) in the legacy app; kept identical here so an invite link works the same way once
-// Video Call lands.
-const ROOMS = ["general", "support", "travel", "business", "casual"];
+// translation). Room list (rooms.js) is shared with Video Call (Phase 5), which also
+// uses the room concept for its own invite links and Firebase captions path.
 
 export default function GroupChat({ initialRoom }) {
   return (

@@ -1,104 +1,11 @@
-/* Group-Chat-tab-specific rules only. Shared primitives live in ../shared.css. */
+/* Group-Chat-tab-specific rules only. Shared primitives (room picker, account header,
+   pills, lang-bar, invite modal) live in ../shared.css — Video Call (Phase 5) reuses
+   those same classes, see VideoCall.css. */
 
 .gc-tab {
   display: flex;
   flex-direction: column;
   gap: 12px;
-}
-
-.gc-toprow {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.gc-room-picker {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.gc-room-btn {
-  padding: 7px 14px;
-  border-radius: 14px;
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--muted);
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.15s;
-}
-
-.gc-room-btn.active {
-  border-color: var(--accent);
-  color: var(--accent);
-  background: var(--accent-bg, rgba(58, 99, 240, 0.1));
-}
-
-.gc-room-btn:hover:not(.active) {
-  border-color: var(--muted);
-  color: var(--text);
-}
-
-.gc-account {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 11px;
-  color: var(--muted);
-}
-
-.gc-account-email {
-  max-width: 140px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.gc-icon-btn {
-  background: var(--surface2);
-  border: 1px solid var(--border);
-  color: var(--muted);
-  border-radius: 8px;
-  padding: 6px 10px;
-  font-size: 11px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.gc-icon-btn:hover {
-  color: var(--text);
-  border-color: var(--muted);
-}
-
-.gc-actionrow {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.gc-pill {
-  border-radius: 8px;
-  padding: 6px 12px;
-  font-size: 11px;
-  font-weight: 700;
-  cursor: pointer;
-  border: 1px solid transparent;
-}
-
-.gc-pill-online {
-  background: rgba(16, 185, 129, 0.1);
-  border-color: rgba(16, 185, 129, 0.3);
-  color: var(--success);
-}
-
-.gc-pill-accent {
-  background: rgba(58, 99, 240, 0.1);
-  border-color: rgba(58, 99, 240, 0.3);
-  color: var(--accent);
 }
 
 .gc-presence-wrap {
@@ -145,17 +52,6 @@
   border-radius: 50%;
   background: var(--success);
   display: inline-block;
-  flex-shrink: 0;
-}
-
-.gc-lang-bar {
-  padding-top: 0;
-  flex-wrap: wrap;
-}
-
-.gc-lang-caption {
-  color: var(--muted);
-  font-size: 12px;
   flex-shrink: 0;
 }
 
@@ -265,53 +161,4 @@
 .gc-input-row .btn {
   flex: none;
   padding: 10px 18px;
-}
-
-.gc-invite-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(5, 7, 14, 0.72);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 20px;
-  z-index: 900;
-}
-
-.gc-invite-box {
-  width: 100%;
-  max-width: 400px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 20px;
-}
-
-.gc-invite-title {
-  font-size: 16px;
-  font-weight: 800;
-  margin-bottom: 6px;
-}
-
-.gc-invite-sub {
-  font-size: 11px;
-  color: var(--muted);
-  margin-bottom: 16px;
-}
-
-.gc-invite-row {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
-.gc-invite-input {
-  flex: 1;
-  background: var(--surface2);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 10px 12px;
-  color: var(--text);
-  font-size: 12px;
-  outline: none;
 }

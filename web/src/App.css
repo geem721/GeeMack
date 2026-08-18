@@ -85,6 +85,13 @@
   width: 100%;
 }
 
+.tab-loading {
+  color: #8b93a8;
+  font-size: 13px;
+  text-align: center;
+  padding: 40px 0;
+}
+
 .tab-placeholder {
   background: #171d2c;
   border: 1px solid #232a3d;

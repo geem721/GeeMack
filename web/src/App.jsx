@@ -1,14 +1,24 @@
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import "./App.css";
 import "./shared.css";
 import { ToastProvider } from "./components/Toast.jsx";
 import Translate from "./tabs/Translate.jsx";
 import CameraOCR from "./tabs/CameraOCR.jsx";
 import Documents from "./tabs/Documents.jsx";
-import GroupChat from "./tabs/GroupChat.jsx";
-import VideoCall from "./tabs/VideoCall.jsx";
 import History from "./tabs/History.jsx";
 import Settings from "./tabs/Settings.jsx";
+import { ROOMS } from "./rooms.js";
+
+// Group Chat and Video Call are lazy-loaded — both pull in Firebase, and Video Call
+// additionally pulls in livekit-client, together large enough to push the main bundle
+// past 500kB and trip Vite's chunk-size warning once Phase 5 added livekit-client on top
+// of Phase 4's Firebase. Without splitting, everyone landing on Translate (the most-used
+// tab, and the one with zero auth/calling dependencies) would download both SDKs before
+// ever touching either feature. Same reasoning Documents.jsx already applies to
+// pdfjs-dist/mammoth/xlsx/jszip via dynamic import() — heavy, feature-specific
+// dependencies shouldn't tax every visitor.
+const GroupChat = lazy(() => import("./tabs/GroupChat.jsx"));
+const VideoCall = lazy(() => import("./tabs/VideoCall.jsx"));
 
 // Nav shell — Phase 0 of MIGRATION_PLAN.md. Video Call is its own top-level tab
 // (not nested inside Group Chat) per the 2026-08-16 decision.
@@ -22,23 +32,25 @@ const TABS = [
   { key: "settings", label: "Settings", icon: "⚙️", Component: Settings },
 ];
 
-// Group Chat invite links (see GroupChat.jsx's copyInviteLink) carry a ?room= query
-// param so a link shared into any chat/email drops the recipient straight into the right
-// room. Read it once on load, before React state exists, since window.location won't
-// change during the session. Also auto-selects the Group Chat tab on arrival — a small,
-// deliberate UX improvement over the legacy app (which highlighted the room but didn't
-// switch panels), not a parity requirement.
-function initialRoomFromUrl() {
+// Invite links (Group Chat's and, as of Phase 5, Video Call's copyInviteLink) carry a
+// ?room= query param, optionally with &tab=videocall, so a shared link drops the
+// recipient straight into the right room on the right tab. Read once on load, before
+// React state exists, since window.location won't change during the session. Defaulting
+// an untagged ?room= link to Group Chat preserves every invite link generated before
+// Phase 5 existed. Auto-selecting the tab on arrival (rather than just highlighting the
+// room, like legacy did) is a small, deliberate UX improvement, not a parity
+// requirement.
+function initialRouteFromUrl() {
   const params = new URLSearchParams(window.location.search);
   const room = params.get("room");
-  return room && ["general", "support", "travel", "business", "casual"].includes(room)
-    ? room
-    : null;
+  if (!room || !ROOMS.includes(room)) return { tab: null, room: null };
+  const tab = params.get("tab") === "videocall" ? "videocall" : "groupchat";
+  return { tab, room };
 }
 
 export default function App() {
-  const [initialRoom] = useState(initialRoomFromUrl);
-  const [activeTab, setActiveTab] = useState(initialRoom ? "groupchat" : "translate");
+  const [{ tab: initialTab, room: initialRoom }] = useState(initialRouteFromUrl);
+  const [activeTab, setActiveTab] = useState(initialTab ?? "translate");
   const active = TABS.find((t) => t.key === activeTab) ?? TABS[0];
   const ActiveComponent = active.Component;
 
@@ -47,7 +59,7 @@ export default function App() {
       <div className="app-shell">
         <header className="app-header">
           <span className="app-title">TalkBridge</span>
-          <span className="app-subtitle">React rebuild — Phase 4: Group Chat tab</span>
+          <span className="app-subtitle">React rebuild — Phase 5: Video Call tab</span>
         </header>
 
         <nav className="tab-nav">
@@ -64,11 +76,13 @@ export default function App() {
         </nav>
 
         <main className="tab-content">
-          {active.key === "groupchat" ? (
-            <ActiveComponent initialRoom={initialRoom} />
-          ) : (
-            <ActiveComponent />
-          )}
+          <Suspense fallback={<div className="tab-loading">Loading…</div>}>
+            {active.key === "groupchat" || active.key === "videocall" ? (
+              <ActiveComponent initialRoom={initialRoom} />
+            ) : (
+              <ActiveComponent />
+            )}
+          </Suspense>
         </main>
       </div>
     </ToastProvider>
