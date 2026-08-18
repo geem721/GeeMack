@@ -380,7 +380,16 @@ function VideoCallPanel({ user, onSignOut, initialRoom }) {
         )}
       </button>
 
-      {callActive && <div className="vc-grid" ref={gridRef} />}
+      {/* Always mounted (visibility toggled via CSS, not conditional rendering) so
+          gridRef.current is already populated by the time joinCall() attaches the local
+          track. It used to be `{callActive && <div ... />}`, which meant the grid div
+          didn't exist in the DOM until AFTER setCallActive(true) triggered a re-render —
+          but attachTrack() for the local video/audio tracks runs *before* that
+          setCallActive() call, so gridRef.current was still null and attachTrack's
+          early-return guard silently no-opped. Local video never rendered, on any
+          browser or device — this wasn't a mobile-specific bug (playsInline, fixed
+          separately, was a real but secondary gap). */}
+      <div className="vc-grid" ref={gridRef} style={{ display: callActive ? "flex" : "none" }} />
       {!callActive && (
         <div className="vc-empty">Join a call to see video tiles and live translated captions here.</div>
       )}

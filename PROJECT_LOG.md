@@ -6,6 +6,61 @@ Read this (and `MIGRATION_PLAN.md`) before starting any work in this repo — se
 
 ---
 
+## 2026-08-18 (session, continued) — Phase 5 live-test bug #2: local video never rendered (real cause, not mobile-specific)
+
+The `playsInline` fix (previous entry) did not resolve it. User retested — this time
+reproducing the blank-video symptom in Edge on the laptop itself (using DevTools to
+narrow it down, since debugging directly on the phone is hard), which immediately
+disproved the "iOS Safari-specific" framing: the call reached `connected` state
+(confirmed via console: `connection state changed: connecting -> connected`), but the
+video area stayed completely blank — no tile, no label, nothing — in a Chromium browser
+that doesn't have iOS Safari's `playsinline` requirement. That ruled out the previous
+fix as the real cause and pointed at something browser-independent.
+
+**Actual root cause found:** in `joinCall()`, `attachTrack(videoTrack, "You (local)",
+true)` — which creates and inserts the local video tile — was called **before**
+`setCallActive(true)`. The `.vc-grid` container div was only rendered when `callActive`
+is true (`{callActive && <div className="vc-grid" ref={gridRef} />}`), so at the moment
+the local track tried to attach, `gridRef.current` was still `null` (the div didn't
+exist in the DOM yet — `setCallActive(true)` hadn't even been called, and React state
+updates aren't synchronous besides). `attachTrack()`'s early-return guard
+(`if (!grid) return;`) silently no-opped. The local video tile never got created, on
+**any** browser or device — this was never actually a mobile/iOS-specific bug, the
+`playsInline` gap (still correct to have fixed) was just a secondary, real-but-not-the-
+cause issue found first.
+
+**Fix:** `.vc-grid` is now always mounted (visibility toggled via an inline `display`
+style keyed off `callActive`, not conditional mounting), so `gridRef.current` is
+populated as soon as the component mounts — well before any call is ever joined. This
+class of bug (a ref not existing yet because its element is behind a conditional that
+hasn't flipped) is exactly why `CameraOCR.jsx`'s `<video>` element is unconditionally
+rendered too, just hidden via an overlay when the camera's off — should have followed
+that same pattern here from the start rather than conditionally mounting `.vc-grid`.
+
+**Still open, not fixed, not fully explained:** the connect→disconnect→reconnect bounce
+seen in both the original report and this retest. It reproduced again on the laptop in
+this same test, ruling out "two devices, same account" (already ruled out) as well as
+"phone vs. laptop" as explanations — it's not device-specific. Each reconnect gets a
+genuinely different `participantID` from the LiveKit server (not just a resumed
+session), which usually means a real new join happened, not an internal resume — but the
+access token itself is redacted by the browser devtools in every log capture we've had,
+so it's still not confirmed whether the client is calling `/api/livekit-token` more than
+once per attempt (an app-level bug) or whether LiveKit's own client is doing a "full
+reconnect" that regenerates server-side state without a fresh token request (something
+in the connection/network path). **Next session should check Apollo1's server-side
+request logs for `/api/livekit-token` during a fresh test window — a hit count of 1
+means it's LiveKit/network-side, more than 1 confirms it's this app re-triggering
+`joinCall()`** — rather than continuing to infer from redacted browser console output.
+
+**Verified in this sandbox:** `npm run build` and `oxlint` clean. Cannot verify live —
+same limitation as every phase; needs a real retest.
+
+**Next: deploy this patch, retest video call (does local video now show?). Separately,
+get real evidence (server log hit count) on the reconnect bounce before proposing a fix
+for it — don't guess a third time.**
+
+---
+
 ## 2026-08-18 (session, continued) — Phase 5 live-test bug: phone video not starting
 
 User tested Phase 5 live from two devices/accounts (laptop + phone, per the project's
