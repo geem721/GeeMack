@@ -6,6 +6,57 @@ Read this (and `MIGRATION_PLAN.md`) before starting any work in this repo — se
 
 ---
 
+## 2026-08-18 (session, continued) — Phase 5 captions: intermittent, added diagnostics instead of guessing a fix
+
+User's live testing of captions has been inconsistent across rounds: first confirmed
+working (Spanish spoken -> English caption shown, correct translation), then in the very
+next test round (bidirectional audio check, two accounts: `...@outlook.com` on the
+device being watched, `...@gmail.com` on the other) captions did not appear at all —
+"didn't see captions coming thru this time" — even though `pm2 logs talkbridge` on
+Apollo1 confirmed the server-side Deepgram pipeline was genuinely transcribing the gmail
+side's speech correctly (real Spanish text observed for WS connection `oqmdmp`, e.g.
+`"sí, todo es bueno."`, `"Gracias, chao."`).
+
+That server-side confirmation rules out Deepgram/the `/ws/transcribe` endpoint as the
+problem. The break is somewhere in the client-side chain after the transcript is
+received: `ws.onmessage` -> Firebase `push()` -> the other client's `onValue` listener
+-> `callTranslate()` -> `showCaption()`'s DOM tile lookup by `data-identity`. Per
+CLAUDE.md's "research before proposing" rule, rather than guess a third theory (a fix
+attempt already burned two rounds on video for a similar "which end is actually broken"
+confusion earlier this session), added diagnostic logging at every step of that chain
+instead of shipping a guessed fix:
+
+- `ws.onmessage`: the `push()` call was fire-and-forget with no `.then()`/`.catch()` —
+  a silent Firebase failure (e.g. a permissions issue on the `captions` path
+  specifically, since `messages`/`presence` already work fine for Group Chat) would be
+  indistinguishable from "nothing happened." Now logs `[caption] pushed to firebase` or
+  `[caption] firebase push FAILED: <err>`.
+- `listenToCaptions`'s `onValue` call had no error callback (its 3rd arg) — a
+  permissions error there would also throw silently. Now logs
+  `[caption] listener error (permissions?)` if that fires, plus logs every snapshot
+  received, whether a message is skipped as "own", and the incoming `from`/`text` before
+  translation.
+- `showCaption`: if the `data-identity` lookup fails to find a matching video tile, it
+  now logs the identity it was looking for AND the full list of `data-identity` values
+  currently in the DOM — so a mismatch (case, whitespace, wrong value) is directly
+  visible instead of a silent no-op. Logs a success line when a caption is actually
+  displayed, too.
+
+No functional/behavioral change otherwise — this is instrumentation only, so it's safe
+to deploy without re-verifying anything else. **Verified in this sandbox:** `npm run
+build` and `oxlint` both clean.
+
+**Next: deploy this patch, retest captions (ideally reproduce the exact failing
+scenario — two different accounts, one speaking), and read the browser console on the
+*receiving* side.** The `[caption]` prefix makes it easy to filter. Whichever log line
+is the last one to appear before it goes quiet tells us exactly which link in the chain
+broke, instead of guessing again. Once that's pinpointed, ship the actual fix (should be
+small — this pipeline is otherwise proven to work, per the first successful test round).
+Audio (both directions) still hasn't been explicitly confirmed either way this round —
+worth confirming in the same retest.
+
+---
+
 ## 2026-08-18 (session, continued) — Phase 5: video confirmed working live; minor console cleanup
 
 The grid-mount fix (previous entry) worked — user retested and both video tiles (local

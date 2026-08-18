@@ -138,9 +138,22 @@ function VideoCallPanel({ user, onSignOut, initialRoom }) {
 
   function showCaption(identity, text) {
     const grid = gridRef.current;
-    if (!grid) return;
+    if (!grid) {
+      console.warn("[caption] showCaption called but .vc-grid isn't mounted");
+      return;
+    }
     const wrapper = grid.querySelector(`[data-identity="${CSS.escape(identity)}"]`);
-    if (!wrapper) return;
+    if (!wrapper) {
+      // Diagnostic for the "captions not showing up" bug: if this fires, the caption
+      // pipeline worked end-to-end (server -> Firebase -> listener -> translate) but the
+      // identity string didn't match any current video tile's data-identity. Logging the
+      // full set of tile identities alongside the one we were looking for turns a silent
+      // no-op into a comparable pair of strings (catches case/whitespace/email mismatches
+      // instead of guessing).
+      const known = [...grid.querySelectorAll("[data-identity]")].map((el) => el.dataset.identity);
+      console.warn("[caption] no video tile for identity", JSON.stringify(identity), "— known tiles:", known);
+      return;
+    }
     let capDiv = wrapper.querySelector(".vc-tile-caption");
     if (!capDiv) {
       capDiv = document.createElement("div");
@@ -152,6 +165,7 @@ function VideoCallPanel({ user, onSignOut, initialRoom }) {
     capDiv._hideTimer = setTimeout(() => {
       capDiv.textContent = "";
     }, 6000);
+    console.log("[caption] displayed on tile", identity, ":", text);
   }
 
   function startCaptionStream() {
@@ -178,7 +192,15 @@ function VideoCallPanel({ user, onSignOut, initialRoom }) {
           const data = JSON.parse(event.data);
           if (data.type === "transcript" && data.text) {
             const captionsRef = ref(db, `chats/${roomRef.current}/captions`);
-            push(captionsRef, { from: user.email, text: data.text, ts: serverTimestamp() });
+            // push() returned a promise that was never awaited or checked — a silent
+            // Firebase failure here (e.g. a security-rules permission issue on the
+            // `captions` path specifically, as opposed to `messages`/`presence` which
+            // Group Chat already writes to successfully) would look identical to
+            // "captions just aren't showing up" from the receiving end, with nothing in
+            // the console to tell them apart. Logging both outcomes explicitly.
+            push(captionsRef, { from: user.email, text: data.text, ts: serverTimestamp() })
+              .then(() => console.log("[caption] pushed to firebase:", data.text))
+              .catch((err) => console.error("[caption] firebase push FAILED:", err));
           }
         };
 
@@ -210,15 +232,26 @@ function VideoCallPanel({ user, onSignOut, initialRoom }) {
     const captionsRef = ref(db, `chats/${roomName}/captions`);
     const capQuery = query(captionsRef, limitToLast(1));
     const handler = (snapshot) => {
+      console.log("[caption] listener fired for room", roomName, "exists:", snapshot.exists());
       snapshot.forEach((child) => {
         const msg = child.val();
-        if (!msg || msg.from === user.email) return;
+        if (!msg || msg.from === user.email) {
+          console.log("[caption] skipping (own message or empty):", msg);
+          return;
+        }
+        console.log("[caption] incoming from", msg.from, ":", msg.text);
         callTranslate(msg.text, "auto", showLangRef.current)
           .then((res) => showCaption(msg.from, res.translation || msg.text))
-          .catch(() => showCaption(msg.from, msg.text));
+          .catch((err) => {
+            console.error("[caption] translate failed, showing raw text:", err);
+            showCaption(msg.from, msg.text);
+          });
       });
     };
-    onValue(capQuery, handler);
+    // onValue's third argument is an error callback — without it, a Firebase permission
+    // error on this specific path (captions) would throw once into the void and never
+    // surface anywhere, indistinguishable from "nothing happened."
+    onValue(capQuery, handler, (err) => console.error("[caption] listener error (permissions?):", err));
     captionOffRef.current = () => off(capQuery, "value", handler);
   }
 
