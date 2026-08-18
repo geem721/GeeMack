@@ -6,6 +6,113 @@ Read this (and `MIGRATION_PLAN.md`) before starting any work in this repo — se
 
 ---
 
+## 2026-08-18 (session, continued) — Phase 4: Group Chat tab built, auth-scope decision made
+
+**Context:** Picked back up after confirming the tool-use fix (previous entry) resolved
+the JSON-leakage bug in `/api/translate`. User confirmed those results looked good and
+asked to move on to the next phase.
+
+**Decision made before building anything — auth scope, resolved with the user, not
+assumed:** the legacy `public/index.html` gates the *entire* app behind a Firebase
+login/signup/email-verification screen; nothing (not even Translate) is usable signed
+out. Phases 1-3 of the React rebuild shipped with **no** auth at all and were confirmed
+working that way. Group Chat is the first feature that actually needs an identity
+(message authorship, presence, room membership). Rather than silently pick a direction,
+asked the user directly. Also flagged directly that this in no way resembles the May
+2026 incident in `POSTMORTEM.md` (silent revert from React back to hand-typed HTML) —
+user hadn't even been worried about that until it came up, wanted it named explicitly
+given the project's history.
+
+Walked through how video call (Phase 5, not yet built) actually works today — LiveKit
+for video/audio, a `/ws/transcribe` WebSocket relaying mic audio to Deepgram, transcripts
+written to Firebase (`chats/{room}/captions`), each participant translating and
+overlaying them — specifically because it also depends on `currentUser` (LiveKit
+identity, caption authorship) and shares the same room concept as Group Chat. That's
+relevant context for the auth decision since it isn't Group-Chat-specific.
+
+**Decided: gate only Group Chat (and, when built, Video Call) behind sign-in. Translate,
+Camera OCR, and Documents stay exactly as shipped — no login required.** This is a
+deliberate, confirmed narrowing from legacy behavior, not an oversight.
+
+**Built this session:**
+- `web/src/firebase.js` — single Firebase app instance (Auth + Realtime Database),
+  config copied verbatim from `public/index.html`'s inline script. Not a secret — it's
+  already public in the live page's source; access control is Firebase Auth + DB
+  security rules, not obscurity. Same Firebase project as the legacy app, so users/rooms/
+  messages are shared across both during the migration.
+- `web/src/hooks/useAuth.js` — reactive wrapper over Firebase Auth (`onAuthStateChanged`,
+  sign in/up/out, resend/reload verification). Deliberately maps the raw Firebase `User`
+  to a plain `{uid, email, emailVerified}` object on every change — the raw `User`
+  mutates in place on `.reload()`, which doesn't trigger a React re-render since the
+  object reference never changes; re-mapping to a fresh plain object each time sidesteps
+  that.
+- `web/src/components/AuthGate.jsx` + `.css` — reusable sign-in wall, render-props style
+  (`<AuthGate featureName="...">{(user, signOutUser) => ...}</AuthGate>`), built once so
+  Video Call (Phase 5) can reuse it instead of duplicating login/signup/verify forms.
+  Same three states as the legacy auth screen (login, signup, verify-email-pending) minus
+  the whole-app gating.
+- `web/src/tabs/GroupChat.jsx` + `.css` — feature-parity port of the legacy Group Chat
+  panel: 5 fixed rooms (general/support/travel/business/casual, unchanged from legacy),
+  presence (`onDisconnect`-backed online/offline), invite links (`?room=X` query param,
+  read by `App.jsx` on load — auto-selects the Group Chat tab on arrival, a small
+  deliberate UX improvement over legacy, which only highlighted the room button), live
+  per-message translation via the shared `callTranslate`, join events. Uses the full
+  29-language shared list (`languages.js`) for the language pickers instead of legacy's
+  narrower 16-language Group Chat dropdown — consistent with the Phase 0 "one shared
+  list" decision, not a scope change.
+  - Real difference from the legacy implementation, worth being explicit about since it's
+    not a literal port: legacy did manual incremental DOM diffing
+    (`gcRenderedIds`/`renderMessage`) because it wasn't using a framework. React's
+    reconciler already handles that safely via `key`, so the rewrite just stores the full
+    sorted message list in state on every Firebase snapshot and lets React diff it — same
+    user-facing behavior, simpler code, no `gcRenderedIds`-equivalent needed.
+  - "Clear view" is simplified to clearing the local translation cache + a toast, instead
+    of legacy's full unsubscribe/resubscribe dance — the React version doesn't have the
+    stale-DOM problem that dance was working around, so the extra machinery would be
+    solving a problem that doesn't exist here.
+- `App.jsx` — reads `?room=` on load (`initialRoomFromUrl()`), passes it to `GroupChat`,
+  auto-switches to the Group Chat tab if present. Subtitle bumped to "Phase 4: Group Chat
+  tab."
+- `web/package.json` — added `firebase@^10.12.2` (same major version as the CDN modules
+  version pinned in `public/index.html`, `10.12.0`, for API-compatibility safety).
+
+**Verified in this sandbox (no live Firebase project reachable here — same limitation as
+every backend-dependent fix this project has hit):**
+- `npm install && npm run build` succeeds clean.
+- `oxlint` clean (same pre-existing `Toast.jsx` fast-refresh warning as every prior
+  phase, not new).
+- Headless Playwright smoke test against the production build (`vite preview`):
+  clicking the Group Chat tab renders the sign-in gate (not the chat itself, confirming
+  Translate/Camera/Documents are unaffected and Group Chat is genuinely walled off);
+  toggling to the signup form works; submitting a signup attempt fails gracefully with a
+  visible error banner rather than crashing (expected — this sandbox has no route to
+  Firebase's servers, `ERR_TUNNEL_CONNECTION_FAILED`, same class of restriction that's
+  blocked live-testing every API-dependent fix all project); visiting
+  `?room=support` auto-activates the Group Chat nav tab. No console/page errors outside
+  the expected network failures.
+- **Not yet verified live** — needs a real test on Apollo1: sign up, verify email, send a
+  message, confirm it's translated for a second account in a different target language,
+  confirm presence count updates, confirm an invite link actually drops a second
+  browser/device into the right room.
+
+**No `server.js` changes this session** — Group Chat is 100% client-side (Firebase +
+the existing `/api/translate` endpoint), so deploy is `npm install && npm run build` +
+copying `dist/` to `/var/www/talkbridge-react/`. No `pm2 restart` needed this time.
+
+**Noted for later, not acted on:** user mentioned that an upcoming "phone piece" may
+integrate something like Twilio, and asked to keep cost/fit in mind. Not in
+`MIGRATION_PLAN.md` today (the plan runs through Phase 6 with Group Chat/Video Call as
+Firebase+LiveKit only, no PSTN calling). Needs real research (Twilio pricing, how it'd
+sit alongside LiveKit/Firebase, whether it's a new phase or extends Phase 5) before
+proposing anything — flagging here now purely so it isn't lost, not committing to an
+approach.
+
+**Next: deploy this patch, have the user create a real account and test Group Chat live
+across two sessions/devices (send/receive, translation, presence, invite link). Once
+confirmed, Phase 4 is done and Phase 5 (Video Call) can start.**
+
+---
+
 ## 2026-08-16 (session: bug-fix marathon + React migration decision)
 
 **Context:** Started as a bug-fix session for TalkBridge's video-call translation

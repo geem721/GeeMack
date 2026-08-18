@@ -22,8 +22,23 @@ const TABS = [
   { key: "settings", label: "Settings", icon: "⚙️", Component: Settings },
 ];
 
+// Group Chat invite links (see GroupChat.jsx's copyInviteLink) carry a ?room= query
+// param so a link shared into any chat/email drops the recipient straight into the right
+// room. Read it once on load, before React state exists, since window.location won't
+// change during the session. Also auto-selects the Group Chat tab on arrival — a small,
+// deliberate UX improvement over the legacy app (which highlighted the room but didn't
+// switch panels), not a parity requirement.
+function initialRoomFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  const room = params.get("room");
+  return room && ["general", "support", "travel", "business", "casual"].includes(room)
+    ? room
+    : null;
+}
+
 export default function App() {
-  const [activeTab, setActiveTab] = useState("translate");
+  const [initialRoom] = useState(initialRoomFromUrl);
+  const [activeTab, setActiveTab] = useState(initialRoom ? "groupchat" : "translate");
   const active = TABS.find((t) => t.key === activeTab) ?? TABS[0];
   const ActiveComponent = active.Component;
 
@@ -32,7 +47,7 @@ export default function App() {
       <div className="app-shell">
         <header className="app-header">
           <span className="app-title">TalkBridge</span>
-          <span className="app-subtitle">React rebuild — Phase 3: Documents tab</span>
+          <span className="app-subtitle">React rebuild — Phase 4: Group Chat tab</span>
         </header>
 
         <nav className="tab-nav">
@@ -49,7 +64,11 @@ export default function App() {
         </nav>
 
         <main className="tab-content">
-          <ActiveComponent />
+          {active.key === "groupchat" ? (
+            <ActiveComponent initialRoom={initialRoom} />
+          ) : (
+            <ActiveComponent />
+          )}
         </main>
       </div>
     </ToastProvider>
