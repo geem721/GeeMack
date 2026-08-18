@@ -6,6 +6,51 @@ Read this (and `MIGRATION_PLAN.md`) before starting any work in this repo — se
 
 ---
 
+## 2026-08-18 (session, continued) — Phase 5 live-test bug: phone video not starting
+
+User tested Phase 5 live from two devices/accounts (laptop + phone, per the project's
+established "always two real accounts" testing practice). Laptop's console log showed a
+connect→disconnect→reconnect bounce before settling — initially misdiagnosed by me as a
+same-identity collision between the two devices; user corrected that they always use two
+different accounts when testing, which rules that out. The laptop connection did
+eventually stabilize and wasn't the actual reported problem; **user's real, corrected
+report: the phone's video wasn't starting** (laptop was fine).
+
+**Root cause (fixed, not yet verified live):** `attachTrack()` in `VideoCall.jsx` created
+video elements without `playsInline`. iOS Safari specifically refuses to autoplay a
+`<video>` element — or forces it into fullscreen instead of playing inline — unless
+`playsinline` is set. Desktop browsers don't enforce this, which is exactly why it went
+unnoticed in the sandbox's headless Chromium smoke tests and on the laptop. This gap was
+carried over from `public/index.html`'s `attachTrack`, which had the identical omission —
+not a new mistake introduced by the port, but never caught before because video calling
+was apparently never tested from an actual phone before now.
+
+**Fix:** explicitly set `el.playsInline = true`, `el.setAttribute('playsinline', 'true')`,
+and `el.autoplay = true` on every video element (local and remote), plus an explicit
+`.play()` call with a caught rejection — mirrors what was already done for audio
+elements, just missing for video.
+
+**The laptop's connect/disconnect/reconnect bounce is unexplained and NOT fixed this
+entry** — my initial cross-device-identity-collision theory doesn't hold given the user's
+correction, and since the laptop call did ultimately stabilize and wasn't the reported
+complaint, it wasn't chased further this round. Worth another look if it recurs or if the
+phone fix doesn't fully resolve the live test — don't re-litigate the ruled-out identity
+theory if so, look at actual evidence (e.g. Apollo1 server logs for repeated
+`/api/livekit-token` hits in a short window, which would confirm or rule out the app
+itself calling `joinCall()` more than once) rather than re-guessing from the browser
+console alone.
+
+**Verified in this sandbox:** `npm run build` and `oxlint` both clean. Cannot verify the
+actual fix live — no real phone/iOS Safari available in this sandboxed environment; needs
+a real retest from the same phone that failed.
+
+**Next: deploy this patch, retest video call from the phone that failed. If the phone
+video now starts, Phase 5 is confirmed and cutover (Phase 6) is next. If it's still
+broken, get the phone's browser (Safari vs Chrome, iOS vs Android) and whether any error
+toast appeared on-screen — needed to diagnose further instead of guessing again.**
+
+---
+
 ## 2026-08-18 (session, continued) — Phase 5: Video Call tab built; cutover-sequencing decided
 
 **Context:** After confirming Phase 4 live, user asked to keep moving toward cutting the

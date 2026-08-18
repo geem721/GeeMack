@@ -101,7 +101,18 @@ function VideoCallPanel({ user, onSignOut, initialRoom }) {
       const el = track.attach();
       el.className = "vc-tile-video";
       el.muted = isLocal;
+      // playsInline is required on iOS Safari for a video element to play inline at
+      // all — without it, the browser either refuses to autoplay or forces fullscreen
+      // instead. Desktop browsers don't enforce this, which is exactly why this gap
+      // (carried over from public/index.html's attachTrack, which had the same
+      // omission) went unnoticed until testing from an actual phone. autoplay is set
+      // explicitly too rather than relying on livekit-client's default, since a muted
+      // local preview needs it to start without a tap.
+      el.playsInline = true;
+      el.setAttribute("playsinline", "true");
+      el.autoplay = true;
       wrapper.insertBefore(el, wrapper.firstChild);
+      el.play().catch((err) => console.error("[video] play() failed for", identity, err));
     } else if (track.kind === "audio") {
       const el = track.attach();
       el.autoplay = true;
