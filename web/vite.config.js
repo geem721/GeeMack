@@ -1,13 +1,12 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
-// Served from a subpath on Apollo1 (talk-bridge.org/react-preview/) rather than the
-// domain root, via nginx -- see MIGRATION_PLAN.md / PROJECT_LOG.md (2026-08-16) for why:
-// this reuses the existing HTTPS cert, and HTTPS is a hard requirement once Phase 1+
-// need getUserMedia (mic/camera), which browsers refuse to grant over plain HTTP.
-// `base` must match the nginx location path exactly, including trailing slash, or the
-// built JS/CSS asset URLs will 404.
+// Phase 6 (MIGRATION_PLAN.md) cutover: now served at the domain root instead of the
+// /react-preview/ staging subpath used for Phases 0-5, so `base` goes back to the
+// default ('/'). This MUST ship together with the matching nginx change (root pointed
+// at the React build's directory instead of /var/www/talkbridge, and the now-redundant
+// /react-preview/ location block removed) -- deploying only one half would 404 every
+// asset (old base baked into old JS/CSS references vs. new nginx root, or vice versa).
 export default defineConfig({
-  base: '/react-preview/',
   plugins: [react()],
 })
