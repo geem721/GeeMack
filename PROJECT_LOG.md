@@ -6,6 +6,34 @@ Read this (and `MIGRATION_PLAN.md`) before starting any work in this repo — se
 
 ---
 
+## 2026-08-18 (session, continued) — Phase 5: video confirmed working live; minor console cleanup
+
+The grid-mount fix (previous entry) worked — user retested and both video tiles (local
+and the other participant, `geem721@gmail.com`) rendered live camera feeds correctly.
+Also cleared up a loose end from earlier this session: the connect/disconnect/reconnect
+"bounce" that took two rounds of guessing to chase turned out to be nothing —
+user confirmed it was just them clicking "End Video Call" then "Start Video Call" again
+while testing, not a bug. No fix needed, nothing left open there.
+
+One cosmetic issue surfaced in the console during this successful test: `AbortError: The
+play() request was interrupted by a new load request` logged for both video tiles.
+Video played correctly despite it — this was `attachTrack()` calling `el.play()`
+explicitly right after `track.attach()`, which already starts playback internally once
+`autoplay`/`playsInline` are set; the two calls raced and the explicit one lost,
+throwing a harmless-but-noisy error. Removed the redundant `.play()` call for video
+(kept for audio, which wasn't erroring). No functional change, just quieting the console
+so a real error doesn't get lost in it during future debugging.
+
+**Verified in this sandbox:** `npm run build` and `oxlint` clean.
+
+**Still to confirm before calling Phase 5 fully done:** video is now confirmed working
+both directions; audio (both directions) and live translated captions haven't been
+explicitly confirmed yet in this round of testing — only video tiles were discussed.
+**Next: deploy this patch, then get explicit confirmation on audio and captions before
+moving to Phase 6 (cutover).**
+
+---
+
 ## 2026-08-18 (session, continued) — Phase 5 live-test bug #2: local video never rendered (real cause, not mobile-specific)
 
 The `playsInline` fix (previous entry) did not resolve it. User retested — this time

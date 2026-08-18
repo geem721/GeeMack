@@ -112,7 +112,13 @@ function VideoCallPanel({ user, onSignOut, initialRoom }) {
       el.setAttribute("playsinline", "true");
       el.autoplay = true;
       wrapper.insertBefore(el, wrapper.firstChild);
-      el.play().catch((err) => console.error("[video] play() failed for", identity, err));
+      // No explicit el.play() call here (unlike the audio branch below) — livekit-
+      // client's track.attach() already starts playback internally once autoplay/
+      // playsInline are set. Calling .play() again immediately after inserting the
+      // element into the DOM raced against that internal call and threw a harmless but
+      // noisy "AbortError: play() request was interrupted by a new load request" on
+      // every tile (confirmed live: video played correctly despite the error). Removed
+      // rather than swallowed, since the call was doing nothing useful.
     } else if (track.kind === "audio") {
       const el = track.attach();
       el.autoplay = true;
