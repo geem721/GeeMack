@@ -3,12 +3,11 @@ import { useAuth } from "../hooks/useAuth.js";
 import { useToast } from "./Toast.jsx";
 import "./AuthGate.css";
 
-// Reusable sign-in wall for the two features that actually need an identity — Group Chat
-// (Phase 4) and, later, Video Call (Phase 5). Everything else (Translate, Camera OCR,
-// Documents) stays open with no login, matching how those three tabs already shipped and
-// were confirmed working. This is a deliberate narrowing from the legacy app, where one
-// login/signup/verify screen blocked the entire app before any tab was usable — confirmed
-// with the user 2026-08-18 rather than assumed.
+// App-wide sign-in wall, wrapping the entire app in App.jsx (restored 2026-08-20 — the
+// 2026-08-18 narrowing to only Group Chat/Video Call was reconsidered: the owner needs
+// to see/manage/verify every account, which requires everyone to have one). Group Chat
+// and Video Call no longer render their own AuthGate; they read `user`/`signOutUser`
+// straight from useAuth() since identity is now guaranteed before any tab is reachable.
 //
 // Render-props children: <AuthGate featureName="Group Chat">{(user, signOutUser) => ...}
 // </AuthGate>. Only invoked once signed in AND email-verified, so the wrapped feature
@@ -131,8 +130,7 @@ export default function AuthGate({ featureName, children }) {
         <div className="auth-gate-icon">🔒</div>
         <div className="auth-gate-title">{mode === "login" ? "Sign In" : "Create Account"}</div>
         <div className="auth-gate-sub">
-          {featureName} needs an account — messages, presence, and rooms are tied to who's
-          signed in.
+          Sign in to use {featureName}.
         </div>
         {error && <div className="auth-gate-error">{error}</div>}
         <form onSubmit={handleSubmit} className="auth-gate-form">

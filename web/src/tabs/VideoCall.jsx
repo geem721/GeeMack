@@ -4,7 +4,7 @@ import { ref, push, onValue, off, query, limitToLast, serverTimestamp } from "fi
 import { db } from "../firebase.js";
 import { callTranslate } from "../api/translate.js";
 import { useToast } from "../components/Toast.jsx";
-import AuthGate from "../components/AuthGate.jsx";
+import { useAuth } from "../hooks/useAuth.js";
 import { LANGUAGES } from "../languages.js";
 import { ROOMS } from "../rooms.js";
 import "./VideoCall.css";
@@ -34,13 +34,8 @@ import "./VideoCall.css";
 // pattern for the same reason (a real <video> tag's srcObject isn't something React
 // should own).
 export default function VideoCall({ initialRoom }) {
-  return (
-    <AuthGate featureName="Video Call">
-      {(user, signOutUser) => (
-        <VideoCallPanel user={user} onSignOut={signOutUser} initialRoom={initialRoom} />
-      )}
-    </AuthGate>
-  );
+  const { user, signOutUser } = useAuth();
+  return <VideoCallPanel user={user} onSignOut={signOutUser} initialRoom={initialRoom} />;
 }
 
 function VideoCallPanel({ user, onSignOut, initialRoom }) {

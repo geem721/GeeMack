@@ -2,6 +2,7 @@ import { lazy, Suspense, useState } from "react";
 import "./App.css";
 import "./shared.css";
 import { ToastProvider } from "./components/Toast.jsx";
+import AuthGate from "./components/AuthGate.jsx";
 import Translate from "./tabs/Translate.jsx";
 import CameraOCR from "./tabs/CameraOCR.jsx";
 import Documents from "./tabs/Documents.jsx";
@@ -56,34 +57,44 @@ export default function App() {
 
   return (
     <ToastProvider>
-      <div className="app-shell">
-        <header className="app-header">
-          <span className="app-title">TalkBridge</span>
-        </header>
+      <AuthGate featureName="TalkBridge">
+        {(user, signOutUser) => (
+          <div className="app-shell">
+            <header className="app-header">
+              <span className="app-title">TalkBridge</span>
+              <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
+                <span style={{ fontSize: 14, opacity: 0.8 }}>{user.email}</span>
+                <button className="btn btn-secondary" onClick={signOutUser}>
+                  Sign Out
+                </button>
+              </div>
+            </header>
 
-        <nav className="tab-nav">
-          {TABS.map((tab) => (
-            <button
-              key={tab.key}
-              className={"nav-btn" + (tab.key === activeTab ? " active" : "")}
-              onClick={() => setActiveTab(tab.key)}
-            >
-              <span className="icon">{tab.icon}</span>
-              {tab.label}
-            </button>
-          ))}
-        </nav>
+            <nav className="tab-nav">
+              {TABS.map((tab) => (
+                <button
+                  key={tab.key}
+                  className={"nav-btn" + (tab.key === activeTab ? " active" : "")}
+                  onClick={() => setActiveTab(tab.key)}
+                >
+                  <span className="icon">{tab.icon}</span>
+                  {tab.label}
+                </button>
+              ))}
+            </nav>
 
-        <main className="tab-content">
-          <Suspense fallback={<div className="tab-loading">Loading…</div>}>
-            {active.key === "groupchat" || active.key === "videocall" ? (
-              <ActiveComponent initialRoom={initialRoom} />
-            ) : (
-              <ActiveComponent />
-            )}
-          </Suspense>
-        </main>
-      </div>
+            <main className="tab-content">
+              <Suspense fallback={<div className="tab-loading">Loading…</div>}>
+                {active.key === "groupchat" || active.key === "videocall" ? (
+                  <ActiveComponent initialRoom={initialRoom} />
+                ) : (
+                  <ActiveComponent />
+                )}
+              </Suspense>
+            </main>
+          </div>
+        )}
+      </AuthGate>
     </ToastProvider>
   );
 }

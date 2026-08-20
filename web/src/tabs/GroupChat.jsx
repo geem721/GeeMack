@@ -13,7 +13,7 @@ import {
 import { db } from "../firebase.js";
 import { callTranslate } from "../api/translate.js";
 import { useToast } from "../components/Toast.jsx";
-import AuthGate from "../components/AuthGate.jsx";
+import { useAuth } from "../hooks/useAuth.js";
 import { LANGUAGES } from "../languages.js";
 import { ROOMS } from "../rooms.js";
 import "./GroupChat.css";
@@ -24,11 +24,8 @@ import "./GroupChat.css";
 // uses the room concept for its own invite links and Firebase captions path.
 
 export default function GroupChat({ initialRoom }) {
-  return (
-    <AuthGate featureName="Group Chat">
-      {(user, signOutUser) => <GroupChatPanel user={user} onSignOut={signOutUser} initialRoom={initialRoom} />}
-    </AuthGate>
-  );
+  const { user, signOutUser } = useAuth();
+  return <GroupChatPanel user={user} onSignOut={signOutUser} initialRoom={initialRoom} />;
 }
 
 function GroupChatPanel({ user, onSignOut, initialRoom }) {
