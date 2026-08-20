@@ -82,6 +82,48 @@ standalone mic-only recorder, per the 2026-08-16 decision).
   caused the problem we're fixing).
 - Final verification pass across every feature before calling it done.
 
+### Phase 7 — Phone Call Translation
+- **Scope, confirmed 2026-08-20:** two phone callers, neither necessarily a TalkBridge
+  app user, bridged together by calling in/being called, with real-time speech
+  translation in both directions — a live interpreted phone call, not on-screen captions.
+- **Architecture: Twilio ConversationRelay, not raw Media Streams.** Two independent
+  ConversationRelay sessions, one per call leg (inbound caller + outbound call to the
+  second participant). ConversationRelay owns speech-to-text, text-to-speech, and —
+  critically — turn-taking/voice-activity detection (it delivers complete transcribed
+  utterances plus speaker events, rather than a raw audio stream this app would have to
+  segment itself). That turn-taking piece was the deciding factor over building on raw
+  Media Streams: getting it wrong on a live two-person phone call (people talking over
+  each other, translating mid-sentence) is a worse failure than the extra per-minute
+  cost of the managed option.
+- **Translation stays on `/api/translate`.** ConversationRelay only manages STT/TTS —
+  the translation step is plain text in, translated text out, over the WebSocket this
+  app controls. No new translation logic; this reuses the same endpoint every other tab
+  already depends on.
+- **Captions as a side effect, not a separate feature.** Mirror each leg's transcribed
+  text into Firebase the same shape Video Call already writes to
+  (`chats/{room}/captions`), so this gets live captions without being asked to build
+  them twice.
+- **Cost, per minute (US calling, both legs of a bridged call):** ~$0.0225 base Twilio
+  voice (inbound + outbound legs) + $0.07 ConversationRelay = **~$0.0925/min**, before
+  translate-endpoint and TTS-provider costs. Roughly $0.93 for a 10-minute bridged call.
+  Confirmed against raw Media Streams (~$0.0313/min) and Telnyx as cheaper alternatives
+  before deciding — Twilio was kept for the published reference architecture and the
+  turn-taking handling, not picked by default.
+- **Latency budget is a stated goal, not an afterthought.** Every utterance round-trips
+  caller → ConversationRelay → this app → `/api/translate` → this app →
+  ConversationRelay → other caller, twice (once per direction). No target number set
+  yet — **next session should set one before writing code**, the same way Phase 5's
+  captions got a live-test-and-diagnose pass instead of a guessed fix.
+- **Not yet decided:** TTS provider (Google/Amazon/ElevenLabs, per ConversationRelay's
+  `ttsProvider` options), STT provider (Deepgram vs Google, per `transcriptionProvider`),
+  whether this is its own top-level nav tab or a phone-specific flow reachable from
+  Video Call, and how a bridged call actually gets initiated (does a TalkBridge user
+  start it from the app, dialing both parties, or is there a public number either party
+  can just call).
+- **Acceptance:** two real phones, two real people speaking different languages, holding
+  an actual back-and-forth conversation through the bridge — live-tested the same way
+  Phase 4 and Phase 5 were confirmed, not just "it builds."
+
 ## Decisions confirmed 2026-08-16 (all three open questions resolved)
 
 1. **Language list:** include Hebrew, Romanian, and Hungarian — 29 languages total.
