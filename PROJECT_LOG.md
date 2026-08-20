@@ -6,6 +6,117 @@ Read this (and `MIGRATION_PLAN.md`) before starting any work in this repo — se
 
 ---
 
+## 2026-08-20 (session, continued) — History and Settings tabs built (real implementations)
+
+**Context:** User spotted, from a live phone screenshot, that History and Settings still
+showed the generic "not built yet" placeholder on the deployed React app — both tabs
+existed in the nav shell since Phase 0 but never got real content. Wanted this fixed
+immediately, so this happened inline in the same session rather than waiting for a
+separate phase.
+
+**What was actually true going in, checked before writing anything:** Phase 1 and Phase 2
+had already built the real functionality — `useTranslationHistory` (localStorage-backed,
+same `tb_history` key and 100-entry cap as the legacy app) was already wired into
+`Translate.jsx`'s translate handler, and the five behavior toggles (Auto-Translate, Save
+to History, Extended Listening, Use Back Camera, Auto-Capture) already existed and
+worked, just as local, unpersisted state with inline checkboxes inside Translate.jsx and
+CameraOCR.jsx themselves — both files had comments explicitly flagging this as a stand-in
+since Settings didn't exist yet. So the real gap was narrower than "two blank tabs": it
+was actually rendering History's list, and centralizing/persisting the five toggles.
+
+**Also checked against the legacy app before building:** grepped `public/index.html` for
+every settings toggle id — confirmed Auto Language Detection and Text-to-Speech toggles
+never gated any real behavior there either (no other code referenced those two ids), so
+neither Phase 1 nor this build ports them. Not a regression; matching what was actually
+functional, not what merely looked functional in the old UI.
+
+**Built:**
+- `web/src/hooks/useSettings.jsx` — new shared, persisted settings store (React Context +
+  localStorage under `tb_settings`), same five keys/defaults as before. Persisting is a
+  deliberate improvement over legacy, which never saved these across reloads (confirmed
+  via grep — plain onclick class-toggles, no storage backing); no downside to fixing that
+  here.
+- `web/src/tabs/History.jsx` — real implementation reading `useTranslationHistory()`,
+  same mode icons/120-char truncation/empty-state copy as legacy's `renderHistory`, Clear
+  All with a confirm prompt.
+- `web/src/tabs/Settings.jsx` — real implementation: Account (email + Sign Out via the
+  same `useAuth()` every tab already uses), Translation/Camera OCR/Voice sections with
+  the five real toggles.
+- `Translate.jsx` and `CameraOCR.jsx` — their local, unpersisted toggle state and inline
+  "Behavior" checkboxes removed; both now read from `useSettings()` instead. CameraOCR's
+  auto-capture went from an imperative checkbox handler to a `useEffect` reacting to the
+  shared setting, which fixes a small gap the old version had: turning Auto-Capture on
+  from Settings while the camera's already running on the Camera OCR tab now actually
+  starts capturing, which the checkbox-only version couldn't do since it only fired on
+  its own click.
+- `App.jsx` wrapped in the new `SettingsProvider`.
+
+**Deployed and verified:** `npm run build` clean, `rsync` to `/var/www/talkbridge-react`,
+confirmed live via `curl` matching the new `index-CdsVPKrl.js`/`index-PT5Sjb7D.css` asset
+hashes exactly.
+
+**Not done:** no dedicated migration-phase number was ever assigned to these two tabs in
+`MIGRATION_PLAN.md` (they were always going to "accrete incrementally" per the original
+Settings.jsx placeholder comment), so nothing there needed updating — this entry is the
+record of it happening.
+
+---
+
+## 2026-08-20 — Auth scope reverted to app-wide sign-in; Phase 7 (Phone Call Translation) scoped
+
+**Context:** User asked to verify whether signup/signin had been removed when TalkBridge
+was first brought up as a React app. Walked through git history and `PROJECT_LOG.md`
+together and found the real answer: Phases 1-3 shipped with no auth at all (nothing to
+remove, it was never there), and the 2026-08-18 Phase 4 auth-scope decision deliberately
+narrowed sign-in to only Group Chat/Video Call, leaving Translate/Camera OCR/Documents
+open. After reviewing that, user reconsidered: they need to see, manage, and verify every
+account, which requires everyone to have one — the narrow scope from 08-18 no longer made
+sense once thought through.
+
+**Decided and shipped: app-wide sign-in restored.** `AuthGate` moved from wrapping just
+Group Chat/Video Call to wrapping the entire app in `App.jsx` — every tab, Translate
+included, now requires sign-in/signup before use, matching the legacy app's behavior.
+Group Chat and Video Call no longer render their own `AuthGate`; they read
+`user`/`signOutUser` straight from `useAuth()` since identity is now guaranteed before any
+tab is reachable. Header gained a signed-in-email + Sign Out control. Built, committed
+(`0423081`), deployed via `rsync` to `/var/www/talkbridge-react` (nginx serves that
+directory directly at the domain root as static files post-Phase-6 — no separate build
+step or deploy script needed beyond `npm run build` + `rsync`). Confirmed live via
+`curl` showing the new `index-D7OpwNUv.js` asset hash being served.
+
+**Why this matters for account visibility:** every signup, before and after this change,
+has always gone into the same Firebase Auth project — nothing about *how* accounts are
+created changed today. What changed is *who* has to create one. Before, only people who
+touched Group Chat/Video Call ever showed up in Firebase Console → Authentication →
+Users. Now everyone who uses TalkBridge for anything shows up there, and can be disabled
+or deleted from that same console. Accounts created during Group Chat testing before
+today are already in that list and remain valid.
+
+**Phase 7 — Phone Call Translation, scoped (not built) and committed to
+`MIGRATION_PLAN.md` (`fdfba83`):** user's next-requested feature, previously only
+flagged as an unconfirmed idea ("the phone piece (Twilio?)") in several 08-18 entries,
+never given real research or a phase number. Researched Twilio's current offering
+(`ConversationRelay`) plus Telnyx as a cost comparison before proposing anything, per
+this project's standing rule. **Decided: Twilio ConversationRelay, not raw Media
+Streams**, specifically because ConversationRelay already solves turn-taking/voice-
+activity detection (delivers complete transcribed utterances plus speaker events) —
+building that from scratch on raw audio was judged a worse risk for a live two-person
+phone call than the extra per-minute cost ($0.07/min ConversationRelay vs $0.0044/min
+raw streaming). Translation still goes through the existing `/api/translate` endpoint
+either way — ConversationRelay only manages STT/TTS, not translation logic, so nothing
+here duplicates or replaces work already done. Plan is to mirror each call leg's
+transcribed text into Firebase the same shape Video Call already uses, so captions come
+along for free. Full scope, cost breakdown, and open questions (TTS/STT provider choice,
+nav placement, how a call actually gets initiated) are in `MIGRATION_PLAN.md`'s new
+Phase 7 section — **not yet built, no code written this session for this piece.**
+
+**Next session should:** get a decision on Phase 7's open questions (TTS provider, STT
+provider, nav placement, call-initiation flow) before writing any code, and set an
+explicit latency budget up front rather than discovering it's laggy after building it —
+same live-test discipline Phase 4/5 used, not a guess.
+
+---
+
 ## 2026-08-18 (session end) — Phase 6 (cutover) deployed; pending user's own overnight verification pass
 
 **Where things stand:** `talk-bridge.org` now serves the React app directly at the

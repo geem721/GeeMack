@@ -3,6 +3,7 @@ import "./App.css";
 import "./shared.css";
 import { ToastProvider } from "./components/Toast.jsx";
 import AuthGate from "./components/AuthGate.jsx";
+import { SettingsProvider } from "./hooks/useSettings.jsx";
 import Translate from "./tabs/Translate.jsx";
 import CameraOCR from "./tabs/CameraOCR.jsx";
 import Documents from "./tabs/Documents.jsx";
@@ -57,6 +58,7 @@ export default function App() {
 
   return (
     <ToastProvider>
+      <SettingsProvider>
       <AuthGate featureName="TalkBridge">
         {(user, signOutUser) => (
           <div className="app-shell">
@@ -95,6 +97,7 @@ export default function App() {
           </div>
         )}
       </AuthGate>
+      </SettingsProvider>
     </ToastProvider>
   );
 }

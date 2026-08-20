@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useToast } from "../components/Toast.jsx";
 import Modal from "../components/Modal.jsx";
 import { callTranslate } from "../api/translate.js";
+import { useSettings } from "../hooks/useSettings.jsx";
 import "./CameraOCR.css";
 
 // Same limited language subsets as the legacy Camera OCR panel (public/index.html) —
@@ -59,10 +60,9 @@ export default function CameraOCR() {
   const [ocrError, setOcrError] = useState(null);
   const [fullScreenOpen, setFullScreenOpen] = useState(false);
 
-  // Behavior toggles — same scope decision as Phase 1's Translate tab: no Settings tab
-  // exists yet, so these live here as local state rather than blocking on that.
-  const [useBackCamera, setUseBackCamera] = useState(true);
-  const [autoCapture, setAutoCapture] = useState(false);
+  // Shared, persisted behavior settings — see useSettings.jsx / Settings.jsx.
+  const { settings } = useSettings();
+  const { useBackCamera, autoCapture } = settings;
 
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
@@ -149,17 +149,24 @@ export default function CameraOCR() {
     }
   }
 
-  function toggleAutoCapture(checked) {
-    setAutoCapture(checked);
+  // Auto-capture is now a shared setting (Settings.jsx), not a local checkbox this tab
+  // owns directly — this effect starts/stops the interval whenever the setting or
+  // camera-on state changes, including turning it on from Settings while already on this
+  // tab with the camera running, which the old checkbox-driven version couldn't do.
+  useEffect(() => {
     clearInterval(autoCaptureTimerRef.current);
     autoCaptureTimerRef.current = null;
-    if (checked && streamRef.current) {
+    if (autoCapture && streamRef.current) {
       autoCaptureTimerRef.current = setInterval(() => {
         if (streamRef.current) captureAndOCR();
       }, AUTO_CAPTURE_INTERVAL_MS);
-      showToast("Auto-capture every 4s");
     }
-  }
+    return () => {
+      clearInterval(autoCaptureTimerRef.current);
+      autoCaptureTimerRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoCapture, cameraOn]);
 
   function copyTranslation() {
     if (!translatedText) {
@@ -263,26 +270,6 @@ export default function CameraOCR() {
         <button className="btn btn-secondary" style={{ width: "100%" }} onClick={openFullScreen}>
           ⛶ View Full OCR Result
         </button>
-      </div>
-
-      <div className="quick-settings">
-        <div className="settings-title">Behavior</div>
-        <label className="settings-checkbox">
-          <input
-            type="checkbox"
-            checked={useBackCamera}
-            onChange={(e) => setUseBackCamera(e.target.checked)}
-          />
-          Use back camera
-        </label>
-        <label className="settings-checkbox">
-          <input
-            type="checkbox"
-            checked={autoCapture}
-            onChange={(e) => toggleAutoCapture(e.target.checked)}
-          />
-          Auto-capture mode (every 4 seconds)
-        </label>
       </div>
 
       {fullScreenOpen && ocrText && (

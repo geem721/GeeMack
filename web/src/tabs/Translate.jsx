@@ -3,6 +3,7 @@ import { AUTO_DETECT, LANGUAGES, languageLabel } from "../languages.js";
 import { useToast } from "../components/Toast.jsx";
 import Modal from "../components/Modal.jsx";
 import { useTranslationHistory } from "../hooks/useTranslationHistory.js";
+import { useSettings } from "../hooks/useSettings.jsx";
 import { callTranslate } from "../api/translate.js";
 import { SPEECH_LANG_MAP, speakWithCheck as speakWithTtsCheck } from "../utils/speech.js";
 import "./Translate.css";
@@ -21,14 +22,11 @@ export default function Translate() {
   const [fullScreenOpen, setFullScreenOpen] = useState(false);
   const [audioWarning, setAudioWarning] = useState(null); // { label, onProceed } | null
 
-  // Behavior toggles. The legacy app put these in its Settings panel, but never
-  // persisted them (verified in public/index.html — plain onclick class-toggles, no
-  // localStorage), so they reset to these same defaults on every load there too. The
-  // React Settings tab isn't built yet (not its own migration phase), so for real Phase 1
-  // parity these live here as local state rather than blocking on Settings tab design.
-  const [autoTranslate, setAutoTranslate] = useState(true);
-  const [saveHistory, setSaveHistory] = useState(true);
-  const [extendedListen, setExtendedListen] = useState(true);
+  // Shared, persisted behavior settings — see useSettings.jsx / Settings.jsx. These
+  // three used to live here as local, unpersisted state (Settings tab didn't exist yet);
+  // now Settings.jsx is the only place that writes them, this just reads.
+  const { settings } = useSettings();
+  const { autoTranslate, saveHistory, extendedListen } = settings;
 
   const lastTranslatedRef = useRef("");
   const debounceRef = useRef(null);
@@ -271,34 +269,6 @@ export default function Translate() {
             ⛶ Full Screen
           </button>
         </div>
-      </div>
-
-      <div className="quick-settings">
-        <div className="settings-title">Behavior</div>
-        <label className="settings-checkbox">
-          <input
-            type="checkbox"
-            checked={autoTranslate}
-            onChange={(e) => setAutoTranslate(e.target.checked)}
-          />
-          Auto-translate as you type
-        </label>
-        <label className="settings-checkbox">
-          <input
-            type="checkbox"
-            checked={saveHistory}
-            onChange={(e) => setSaveHistory(e.target.checked)}
-          />
-          Save to history
-        </label>
-        <label className="settings-checkbox">
-          <input
-            type="checkbox"
-            checked={extendedListen}
-            onChange={(e) => setExtendedListen(e.target.checked)}
-          />
-          Extended listening mode (3s pause before mic stops)
-        </label>
       </div>
 
       {audioWarning && (
