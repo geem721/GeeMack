@@ -783,12 +783,17 @@ function speakResult(){const text=document.getElementById('resultBox').querySele
 
 // MIC - FIXED: continuous mode + silence timer for better pause detection
 function toggleMic(){
+  const srcLang=document.getElementById('srcLang').value;
+  if(srcLang==='auto'){
+    if(isRecording){stopAutoDetectMic();return;}
+    startAutoDetectMic();
+    return;
+  }
   if(!('webkitSpeechRecognition'in window||'SpeechRecognition'in window)){showToast('Speech recognition not supported');return;}
   const btn=document.getElementById('micBtn');
   if(isRecording){recognition?.stop();isRecording=false;btn.classList.remove('recording');btn.textContent='🎤';return;}
   const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
   recognition=new SR();
-  const srcLang=document.getElementById('srcLang').value;
   const extendedMode=document.getElementById('toggleExtendedListen').classList.contains('on');
   recognition.lang=CAPTION_LANG_MAP[srcLang]||'en-US';
   recognition.continuous=true;
@@ -815,6 +820,41 @@ function toggleMic(){
   recognition.start();
   isRecording=true;btn.classList.add('recording');btn.textContent='⏹';
   showToast(extendedMode?'Listening (extended)…':'Listening…',3000);
+}
+// Auto-Detect voice path: records a clip, transcribes it locally in the browser via an
+// in-browser Whisper model (see the transformers.js module script near the end of this
+// file). This is free (no server/API cost, runs on the visitor's own device) and covers
+// far more languages than the browser's native SpeechRecognition, which has no auto-
+// detect mode at all and was silently defaulting to English for every non-English or
+// non-Spanish speaker.
+let autoMicStream=null,autoMicRecorder=null,autoMicChunks=[];
+async function startAutoDetectMic(){
+  const btn=document.getElementById('micBtn');
+  try{
+    autoMicStream=await navigator.mediaDevices.getUserMedia({audio:true});
+  }catch(e){showToast('Mic error: '+e.message);return;}
+  autoMicChunks=[];
+  autoMicRecorder=new MediaRecorder(autoMicStream,{mimeType:'audio/webm;codecs=opus'});
+  autoMicRecorder.ondataavailable=(e)=>{if(e.data.size>0)autoMicChunks.push(e.data);};
+  autoMicRecorder.onstop=async()=>{
+    autoMicStream.getTracks().forEach(t=>t.stop());autoMicStream=null;
+    isRecording=false;btn.classList.remove('recording');btn.textContent='🎤';
+    if(!autoMicChunks.length)return;
+    const blob=new Blob(autoMicChunks,{type:'audio/webm'});
+    if(!window.tbWhisperTranscribe){showToast('Speech model still loading, try again in a moment');return;}
+    showToast('Transcribing…',6000);
+    try{
+      const text=await window.tbWhisperTranscribe(blob);
+      if(text&&text.trim()){document.getElementById('srcText').value=text.trim();doTranslate();}
+      else showToast('No speech detected');
+    }catch(err){showToast('Transcription error: '+err.message);}
+  };
+  autoMicRecorder.start();
+  isRecording=true;btn.classList.add('recording');btn.textContent='⏹';
+  showToast('Listening… tap mic to stop',4000);
+}
+function stopAutoDetectMic(){
+  if(autoMicRecorder&&autoMicRecorder.state!=='inactive')autoMicRecorder.stop();
 }
 
 async function startCamera(){
@@ -1290,6 +1330,35 @@ async function leaveVideoCall() {
   videoActive = false;
   showToast('Left video call');
 }
+</script>
+<script type="module">
+import { pipeline } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.0.1';
+let tbWhisperPipelinePromise=null;
+function getTbWhisperPipeline(){
+  if(!tbWhisperPipelinePromise){
+    tbWhisperPipelinePromise=pipeline('automatic-speech-recognition','onnx-community/whisper-base',{dtype:'q8'});
+  }
+  return tbWhisperPipelinePromise;
+}
+window.tbWhisperTranscribe=async function(blob){
+  const transcriber=await getTbWhisperPipeline();
+  const arrayBuffer=await blob.arrayBuffer();
+  const AC=window.AudioContext||window.webkitAudioContext;
+  const audioCtx=new AC({sampleRate:16000});
+  const decoded=await audioCtx.decodeAudioData(arrayBuffer);
+  let samples=decoded.getChannelData(0);
+  if(decoded.numberOfChannels>1){
+    const mixed=new Float32Array(samples.length);
+    for(let ch=0;ch<decoded.numberOfChannels;ch++){
+      const chData=decoded.getChannelData(ch);
+      for(let i=0;i<chData.length;i++)mixed[i]+=chData[i]/decoded.numberOfChannels;
+    }
+    samples=mixed;
+  }
+  audioCtx.close();
+  const output=await transcriber(samples,{chunk_length_s:30});
+  return output.text||'';
+};
 </script>
 </body>
 </html>
