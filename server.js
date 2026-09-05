@@ -291,6 +291,54 @@ const ELEVENLABS_TTS_LANGUAGES = new Set([
   'pt', 'zh', 'ko', 'ar', 'ru', 'hi', 'pl', 'tr', 'vi', 'uk', 'id', 'el', 'sv', 'cs', 'ro', 'hu'
 ]);
 
+// Google Cloud TTS (Chirp3-HD) covers the languages ElevenLabs/Deepgram don't.
+// Confirmed via a live voices.list API call (not docs) on 2026-09-05 -- Persian (fa-IR)
+// returned zero voices and is intentionally NOT included; dropped from phone-feature
+// scope for now rather than adding a 4th vendor for one language.
+const GOOGLE_TTS_VOICE_MODELS = {
+  th: { languageCode: 'th-TH', name: 'th-TH-Chirp3-HD-Achernar' },
+  bn: { languageCode: 'bn-IN', name: 'bn-IN-Chirp3-HD-Achernar' },
+  ur: { languageCode: 'ur-IN', name: 'ur-IN-Chirp3-HD-Achernar' },
+  he: { languageCode: 'he-IL', name: 'he-IL-Chirp3-HD-Achernar' }
+};
+
+async function speakViaGoogleCloud(text, legInfo) {
+  const voice = GOOGLE_TTS_VOICE_MODELS[legInfo.lang];
+  if (!voice) return;
+  const startTime = Date.now();
+  try {
+    const response = await fetch(`https://texttospeech.googleapis.com/v1/text:synthesize?key=${process.env.GOOGLE_TTS_API_KEY}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        input: { text },
+        voice: { languageCode: voice.languageCode, name: voice.name },
+        audioConfig: { audioEncoding: 'MULAW', sampleRateHertz: 8000 }
+      })
+    });
+    if (!response.ok) {
+      const errBody = await response.text();
+      console.error(`[call-audio] TTS(google) http error status=${response.status} body=${errBody}`);
+      return;
+    }
+    const data = await response.json();
+    const audioBuffer = Buffer.from(data.audioContent, 'base64');
+    if (legInfo.ws.readyState !== legInfo.ws.OPEN) {
+      console.log(`[call-audio] TTS(google) skipping send, target leg websocket closed (lang=${legInfo.lang})`);
+      return;
+    }
+    legInfo.ws.send(JSON.stringify({
+      event: 'media',
+      streamSid: legInfo.streamSid,
+      media: { payload: audioBuffer.toString('base64') }
+    }));
+    const totalTime = Date.now() - startTime;
+    console.log(`[call-audio] TTS(google) complete: ${audioBuffer.length} bytes, total=${totalTime}ms (lang=${legInfo.lang})`);
+  } catch (err) {
+    console.error(`[call-audio] TTS(google) exception message=${err?.message}`, err);
+  }
+}
+
 async function speakToLeg(text, legInfo) {
   if (!legInfo || !legInfo.ws || !legInfo.streamSid || !text) return;
   if (legInfo.ws.readyState !== legInfo.ws.OPEN) {
@@ -302,6 +350,9 @@ async function speakToLeg(text, legInfo) {
   }
   if (ELEVENLABS_TTS_LANGUAGES.has(legInfo.lang)) {
     return speakViaElevenLabs(text, legInfo);
+  }
+  if (GOOGLE_TTS_VOICE_MODELS[legInfo.lang]) {
+    return speakViaGoogleCloud(text, legInfo);
   }
   console.log(`[call-audio] no TTS voice available for lang=${legInfo.lang}, skipping speak-back`);
 }
