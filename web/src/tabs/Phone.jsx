@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { useToast } from "../components/Toast.jsx";
-import { LANGUAGES } from "../languages.js";
+import Modal from "../components/Modal.jsx";
+import { useAuth } from "../hooks/useAuth.js";
+import { useContacts } from "../hooks/useContacts.js";
+import { LANGUAGES, languageLabel } from "../languages.js";
 import "./Phone.css";
 
 // Phone tab — real PSTN phone calls with live speech translation, built on top of the
@@ -17,8 +20,17 @@ import "./Phone.css";
 // caption decision). The client just subscribes and shows the latest line — it doesn't
 // run its own translate pipeline the way VideoCall.jsx does for group calls.
 //
-// Contacts (save/select a number instead of retyping) and call recording are both
-// explicitly deferred, planned follow-ups — not built here.
+// Contacts: saved to Firebase under contacts/{uid}, same database Group Chat/Video Call
+// already use — see hooks/useContacts.js. Tapping a contact fills in their number and
+// language; "Save as contact" stores whatever's currently entered.
+//
+// Recording (this session): opt-in per call, default OFF. When enabled, /api/call/bridge
+// threads record=1 into each leg's stream-twiml URL; server.js plays an audible consent
+// notice to both parties before connecting the stream (two-party consent laws), captures
+// both legs' raw audio to disk, and mixes them into one stereo WAV (leg A left channel,
+// leg B right channel) via ffmpeg once both legs disconnect. Files land in
+// ~/GeeMack/recordings/ on Apollo1 — not Firebase Storage, to avoid a second storage
+// vendor. This tab just shows a download link for the most recently recorded call.
 const MY_PHONE_KEY = "tb_my_phone";
 
 function normalizePhone(raw) {
@@ -36,18 +48,26 @@ function normalizePhone(raw) {
 }
 
 export default function Phone() {
+  const { user } = useAuth();
   const { showToast } = useToast();
+  const { contacts, addContact, deleteContact } = useContacts(user?.uid);
+
   const [myPhone, setMyPhone] = useState(() => localStorage.getItem(MY_PHONE_KEY) || "");
   const [theirPhone, setTheirPhone] = useState("");
   const [myLang, setMyLang] = useState("en");
   const [theirLang, setTheirLang] = useState("es");
   const [captionsOn, setCaptionsOn] = useState(true);
+  const [recordOn, setRecordOn] = useState(false);
   const [captionText, setCaptionText] = useState("");
   const [callActive, setCallActive] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [ending, setEnding] = useState(false);
+  const [savingContact, setSavingContact] = useState(false);
+  const [newContactName, setNewContactName] = useState("");
+  const [lastRecordingRoom, setLastRecordingRoom] = useState(null);
+  const [recordingReady, setRecordingReady] = useState(false);
 
-  const callRef = useRef({ room: null, callASid: null, callBSid: null });
+  const callRef = useRef({ room: null, callASid: null, callBSid: null, recorded: false });
   const captionWsRef = useRef(null);
 
   function connectCaptions(room) {
@@ -73,7 +93,7 @@ export default function Phone() {
   }
 
   async function endCallInternal() {
-    const { callASid, callBSid } = callRef.current;
+    const { callASid, callBSid, room, recorded } = callRef.current;
     if (!callASid && !callBSid) return;
     try {
       await fetch("/api/call/hangup", {
@@ -85,9 +105,17 @@ export default function Phone() {
       console.error("[phone] hangup request failed:", err);
     }
     disconnectCaptions();
-    callRef.current = { room: null, callASid: null, callBSid: null };
+    callRef.current = { room: null, callASid: null, callBSid: null, recorded: false };
     setCallActive(false);
     setCaptionText("");
+    // The server mixes both legs into one file once they've both disconnected — that
+    // happens right as this hangup completes, so the file is normally ready within a
+    // second or two. The download link just points at /api/call/recording/{room};
+    // clicking it before the mix finishes shows the server's "still processing" message
+    // rather than failing silently.
+    if (recorded && room) {
+      setLastRecordingRoom(room);
+    }
   }
 
   // End the call on unmount (tab switch) — mirrors VideoCall.jsx's cleanup. A real phone
@@ -100,6 +128,43 @@ export default function Phone() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Once a recorded call ends, quietly poll the download endpoint (HEAD, no body) until
+  // ffmpeg has actually finished mixing the two legs — rather than showing a download
+  // link that might 404 for the second or two the mix takes. Gives up after ~20s and
+  // shows the link anyway (better than never showing it for an unusually long call).
+  useEffect(() => {
+    if (!lastRecordingRoom) {
+      setRecordingReady(false);
+      return;
+    }
+    setRecordingReady(false);
+    let cancelled = false;
+    let attempts = 0;
+    let timer = null;
+    const check = async () => {
+      attempts += 1;
+      try {
+        const res = await fetch(`/api/call/recording/${lastRecordingRoom}`, { method: "HEAD" });
+        if (res.ok) {
+          if (!cancelled) setRecordingReady(true);
+          return;
+        }
+      } catch (err) {
+        // network hiccup — just retry on the next tick
+      }
+      if (!cancelled && attempts < 20) {
+        timer = setTimeout(check, 1000);
+      } else if (!cancelled) {
+        setRecordingReady(true); // give up waiting, show the link anyway
+      }
+    };
+    timer = setTimeout(check, 500);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [lastRecordingRoom]);
+
   async function startCall() {
     const a = normalizePhone(myPhone);
     const b = normalizePhone(theirPhone);
@@ -108,18 +173,19 @@ export default function Phone() {
       return;
     }
     localStorage.setItem(MY_PHONE_KEY, myPhone.trim());
+    setLastRecordingRoom(null);
     setConnecting(true);
     try {
       const res = await fetch("/api/call/bridge", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ partyA: a, partyB: b, langA: myLang, langB: theirLang }),
+        body: JSON.stringify({ partyA: a, partyB: b, langA: myLang, langB: theirLang, record: recordOn }),
       });
       const data = await res.json();
       if (!res.ok || data.error) throw new Error(data.error || "Could not start the call");
-      callRef.current = { room: data.room, callASid: data.callASid, callBSid: data.callBSid };
+      callRef.current = { room: data.room, callASid: data.callASid, callBSid: data.callBSid, recorded: recordOn };
       setCallActive(true);
-      showToast("Calling both numbers…");
+      showToast(recordOn ? "Calling both numbers… a recording notice will play for both parties." : "Calling both numbers…");
       if (captionsOn) connectCaptions(data.room);
     } catch (err) {
       console.error("[phone] bridge error:", err);
@@ -147,10 +213,70 @@ export default function Phone() {
     }
   }
 
+  function selectContact(c) {
+    setTheirPhone(c.phone);
+    if (c.lang) setTheirLang(c.lang);
+    showToast(`Selected ${c.name}`, 1500);
+  }
+
+  async function saveContact() {
+    const phone = normalizePhone(theirPhone);
+    const name = newContactName.trim();
+    if (!phone || !name) return;
+    try {
+      await addContact({ name, phone, lang: theirLang });
+      showToast("Contact saved");
+      setSavingContact(false);
+      setNewContactName("");
+    } catch (err) {
+      console.error("[phone] save contact failed:", err);
+      showToast("Could not save contact: " + err.message, 3000);
+    }
+  }
+
   return (
     <div className="ph-tab">
       {!callActive ? (
         <>
+          {contacts.length > 0 && (
+            <div className="ph-contacts">
+              <div className="settings-title">Contacts</div>
+              <div className="ph-contact-list">
+                {contacts.map((c) => (
+                  <div key={c.id} className="ph-contact-chip" onClick={() => selectContact(c)}>
+                    <span className="ph-contact-name">{c.name}</span>
+                    {c.lang && <span className="ph-contact-lang">{languageLabel(c.lang)}</span>}
+                    <button
+                      className="ph-contact-del"
+                      title="Delete contact"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        deleteContact(c.id);
+                      }}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {lastRecordingRoom && (
+            recordingReady ? (
+              <a
+                className="ph-recording-link"
+                href={`/api/call/recording/${lastRecordingRoom}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                🎙️ Download last call's recording
+              </a>
+            ) : (
+              <div className="ph-recording-link ph-recording-pending">
+                <span className="spinner" /> Processing recording…
+              </div>
+            )
+          )}
           <div className="quick-settings">
             <div className="settings-title">Your phone</div>
             <input
@@ -196,10 +322,26 @@ export default function Phone() {
               </select>
               <span className="gc-lang-caption">they speak</span>
             </div>
+            <button
+              className="btn btn-secondary ph-save-contact-btn"
+              onClick={() => setSavingContact(true)}
+              disabled={!theirPhone.trim()}
+            >
+              💾 Save as contact
+            </button>
           </div>
           <label className="settings-checkbox">
             <input type="checkbox" checked={captionsOn} onChange={toggleCaptions} />
             Show live captions during the call
+          </label>
+          <label className="settings-checkbox">
+            <input
+              type="checkbox"
+              checked={recordOn}
+              onChange={(e) => setRecordOn(e.target.checked)}
+              disabled={connecting}
+            />
+            🎙️ Record this call (both parties will hear a notice)
           </label>
           <button className="btn btn-primary ph-call-btn" onClick={startCall} disabled={connecting}>
             {connecting ? <span className="spinner" /> : "📞 Start Call"}
@@ -211,6 +353,7 @@ export default function Phone() {
           <div className="ph-active-sub">
             {myPhone} ↔ {theirPhone}
           </div>
+          {callRef.current.recorded && <div className="ph-recording-badge">🎙️ Recording</div>}
           <label className="settings-checkbox ph-caption-toggle">
             <input type="checkbox" checked={captionsOn} onChange={toggleCaptions} />
             Live captions
@@ -228,6 +371,30 @@ export default function Phone() {
             {ending ? <span className="spinner" /> : "🔴 End Call"}
           </button>
         </div>
+      )}
+      {savingContact && (
+        <Modal
+          title="Save contact"
+          meta={`${theirPhone} — ${languageLabel(theirLang)}`}
+          onClose={() => setSavingContact(false)}
+        >
+          <input
+            className="ph-input"
+            type="text"
+            placeholder="Contact name"
+            value={newContactName}
+            onChange={(e) => setNewContactName(e.target.value)}
+            autoFocus
+          />
+          <button
+            className="btn btn-primary"
+            style={{ width: "100%", marginTop: 12 }}
+            disabled={!newContactName.trim()}
+            onClick={saveContact}
+          >
+            Save
+          </button>
+        </Modal>
       )}
     </div>
   );

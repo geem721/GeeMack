@@ -58,3 +58,90 @@
   font-size: 14px;
   color: var(--text);
 }
+/* Contacts (added this session) — a horizontally-wrapping row of tappable chips above
+   the "Call this number" field. Kept as simple chips rather than a full list/table since
+   the expected count is small (personal contacts, not an address book import). */
+.ph-contacts {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ph-contact-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.ph-contact-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.ph-contact-chip:hover {
+  border-color: var(--accent);
+}
+.ph-contact-name {
+  font-weight: 600;
+  color: var(--text);
+}
+.ph-contact-lang {
+  color: var(--muted);
+  font-size: 11px;
+}
+.ph-contact-del {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+}
+.ph-contact-del:hover {
+  color: var(--danger);
+}
+.ph-save-contact-btn {
+  width: 100%;
+}
+/* Recording — a download link for the most recently recorded call on the setup screen
+   (or a "processing" state while ffmpeg is still mixing), and a badge during an active
+   recorded call. */
+.ph-recording-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  text-decoration: none;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface2);
+  align-self: flex-start;
+}
+.ph-recording-link:hover {
+  border-color: var(--accent);
+}
+.ph-recording-pending {
+  color: var(--muted);
+  cursor: default;
+}
+.ph-recording-pending:hover {
+  border-color: var(--border);
+}
+.ph-recording-badge {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--danger);
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: 8px;
+  padding: 4px 10px;
+}

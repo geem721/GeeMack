@@ -1,6 +1,8 @@
 import 'dotenv/config';
 import express from 'express';
 import path from 'path';
+import fs from 'fs';
+import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import http from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
@@ -155,33 +157,46 @@ app.post('/api/call/twiml', (req, res) => {
   res.send(twiml.toString());
 });
 
+const FAILED_CALL_STATUSES = new Set(['no-answer', 'busy', 'failed', 'canceled']);
 app.post('/api/call/status', (req, res) => {
-  console.log('Call status update:', req.body?.CallStatus, req.body?.CallSid);
+  const status = req.body?.CallStatus;
+  const sid = req.body?.CallSid;
+  console.log('Call status update:', status, sid);
+  if (FAILED_CALL_STATUSES.has(status) && roomBySid.has(sid)) {
+    const room = roomBySid.get(sid);
+    roomBySid.delete(sid);
+    cleanupFailedRecording(room);
+  }
   res.sendStatus(200);
 });
 
 // --- Two-leg conference bridge (live interpreted call) ---
 app.post('/api/call/bridge', async (req, res) => {
-  const { partyA, partyB, langA, langB } = req.body;
+  const { partyA, partyB, langA, langB, record } = req.body;
   if (!partyA || !partyB) {
     return res.status(400).json({ error: 'partyA and partyB phone numbers are required' });
   }
   const room = `talkbridge-${Date.now()}`;
+  const recordFlag = record ? '1' : '0';
   try {
     const callA = await twilioClient.calls.create({
       to: partyA,
       from: process.env.TWILIO_PHONE_NUMBER,
-      url: `https://talk-bridge.org/api/call/stream-twiml?room=${encodeURIComponent(room)}&leg=A&lang=${encodeURIComponent(langA || 'en')}`,
+      url: `https://talk-bridge.org/api/call/stream-twiml?room=${encodeURIComponent(room)}&leg=A&lang=${encodeURIComponent(langA || 'en')}&record=${recordFlag}`,
       statusCallback: 'https://talk-bridge.org/api/call/status',
       statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed']
     });
     const callB = await twilioClient.calls.create({
       to: partyB,
       from: process.env.TWILIO_PHONE_NUMBER,
-      url: `https://talk-bridge.org/api/call/stream-twiml?room=${encodeURIComponent(room)}&leg=B&lang=${encodeURIComponent(langB || 'es')}`,
+      url: `https://talk-bridge.org/api/call/stream-twiml?room=${encodeURIComponent(room)}&leg=B&lang=${encodeURIComponent(langB || 'es')}&record=${recordFlag}`,
       statusCallback: 'https://talk-bridge.org/api/call/status',
       statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed']
     });
+    if (record) {
+      roomBySid.set(callA.sid, room);
+      roomBySid.set(callB.sid, room);
+    }
     return res.json({ room, callASid: callA.sid, callBSid: callB.sid });
   } catch (err) {
     console.error('Bridge call error:', err);
@@ -224,14 +239,31 @@ app.post('/api/call/stream-twiml', (req, res) => {
   const room = req.query.room || 'talkbridge-default';
   const leg = req.query.leg || 'A';
   const lang = req.query.lang || 'en';
+  const record = req.query.record === '1';
   const twiml = new twilio.twiml.VoiceResponse();
+  if (record) {
+    twiml.say('This call may be recorded for quality and translation purposes.');
+  }
   const connect = twiml.connect();
   const stream = connect.stream({ url: 'wss://talk-bridge.org/ws/call-audio' });
   stream.parameter({ name: 'room', value: room });
   stream.parameter({ name: 'leg', value: leg });
   stream.parameter({ name: 'lang', value: lang });
+  stream.parameter({ name: 'record', value: record ? '1' : '0' });
   res.type('text/xml');
   res.send(twiml.toString());
+});
+// --- Call recording download ---
+app.get('/api/call/recording/:room', (req, res) => {
+  const room = req.params.room;
+  if (!/^[a-zA-Z0-9_-]+$/.test(room)) {
+    return res.status(400).json({ error: 'Invalid room id' });
+  }
+  const filePath = path.join(RECORDINGS_DIR, `${room}.wav`);
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({ error: 'Recording not found - it may still be processing, or this call was not recorded.' });
+  }
+  res.download(filePath, `talkbridge-call-${room}.wav`);
 });
 
 // --- Real-time captioning: /ws/transcribe ---
@@ -251,6 +283,42 @@ const callWss = new WebSocketServer({ noServer: true });
 const captionWss = new WebSocketServer({ noServer: true });
 const captionSubscribers = new Map(); // room -> Set of ws
 const callLegs = new Map(); // room -> { A: ws, B: ws }
+const RECORDINGS_DIR = path.join(__dirname, 'recordings');
+fs.mkdirSync(RECORDINGS_DIR, { recursive: true });
+const recordingRooms = new Map(); // room -> { A: {path, done}, B: {path, done} }
+const roomBySid = new Map(); // callSid -> room (only tracked when recording is on, for no-answer cleanup)
+function cleanupFailedRecording(room) {
+  if (!recordingRooms.has(room)) return;
+  recordingRooms.delete(room);
+  ['A', 'B'].forEach((leg) => {
+    const p = path.join(RECORDINGS_DIR, `${room}-${leg}.raw`);
+    fs.unlink(p, () => {}); // ignore errors - the leg that never answered has no file
+  });
+  console.log(`[recording] cleaned up incomplete recording for room=${room} (call did not complete)`);
+}
+function maybeMixRecording(room) {
+  const info = recordingRooms.get(room);
+  if (!info || !info.A || !info.B || !info.A.done || !info.B.done) return;
+  recordingRooms.delete(room);
+  const outPath = path.join(RECORDINGS_DIR, `${room}.wav`);
+  const ff = spawn('ffmpeg', [
+    '-f', 'mulaw', '-ar', '8000', '-i', info.A.path,
+    '-f', 'mulaw', '-ar', '8000', '-i', info.B.path,
+    '-filter_complex', '[0:a][1:a]amerge=inputs=2',
+    '-ac', '2',
+    outPath
+  ]);
+  ff.stderr.on('data', (d) => console.log(`[recording] ffmpeg[${room}]: ${d}`));
+  ff.on('close', (code) => {
+    if (code === 0) {
+      console.log(`[recording] saved ${outPath}`);
+      fs.unlink(info.A.path, () => {});
+      fs.unlink(info.B.path, () => {});
+    } else {
+      console.error(`[recording] ffmpeg failed for room=${room} code=${code}`);
+    }
+  });
+}
 const CALL_LANG_NAMES = {
   auto:'Auto-Detected', en:'English', es:'Spanish', fr:'French', de:'German',
   it:'Italian', pt:'Portuguese', zh:'Chinese', ja:'Japanese', ko:'Korean',
@@ -511,6 +579,7 @@ callWss.on('connection', (ws) => {
   let streamSid = null;
   let dgConnection = null;
   let transcriptBuffer = '';
+  let recordStream = null;
   ws.on('message', (raw) => {
     let data;
     try {
@@ -527,9 +596,16 @@ callWss.on('connection', (ws) => {
       room = params.room || 'unknown-room';
       leg = params.leg || 'unknown-leg';
       const lang = params.lang || 'en';
+      const record = params.record === '1';
       if (!callLegs.has(room)) callLegs.set(room, {});
       callLegs.get(room)[leg] = { ws, lang, streamSid };
-      console.log(`[call-audio] stream started room=${room} leg=${leg} lang=${lang} streamSid=${streamSid}`);
+      console.log(`[call-audio] stream started room=${room} leg=${leg} lang=${lang} streamSid=${streamSid} record=${record}`);
+      if (record) {
+        if (!recordingRooms.has(room)) recordingRooms.set(room, {});
+        const recPath = path.join(RECORDINGS_DIR, `${room}-${leg}.raw`);
+        recordStream = fs.createWriteStream(recPath);
+        recordingRooms.get(room)[leg] = { path: recPath, done: false };
+      }
       dgConnection = deepgram.listen.live({
         model: 'nova-3',
         language: lang,
@@ -594,6 +670,9 @@ callWss.on('connection', (ws) => {
       if (dgConnection) {
         dgConnection.send(audioBuffer);
       }
+      if (recordStream) {
+        recordStream.write(audioBuffer);
+      }
       if (msgCount % 100 === 0) {
         console.log(`[call-audio][room=${room} leg=${leg}] audio received so far: ${bytesReceived} bytes in ${msgCount} messages`);
       }
@@ -602,6 +681,17 @@ callWss.on('connection', (ws) => {
       if (dgConnection) {
         dgConnection.finish();
         dgConnection = null;
+      }
+      if (recordStream) {
+        const rs = recordStream;
+        const finishedRoom = room;
+        const finishedLeg = leg;
+        recordStream = null;
+        rs.end(() => {
+          const info = recordingRooms.get(finishedRoom);
+          if (info && info[finishedLeg]) info[finishedLeg].done = true;
+          maybeMixRecording(finishedRoom);
+        });
       }
       if (room && callLegs.has(room)) {
         delete callLegs.get(room)[leg];
@@ -614,6 +704,17 @@ callWss.on('connection', (ws) => {
     if (dgConnection) {
       dgConnection.finish();
       dgConnection = null;
+    }
+    if (recordStream) {
+      const rs = recordStream;
+      const finishedRoom = room;
+      const finishedLeg = leg;
+      recordStream = null;
+      rs.end(() => {
+        const info = recordingRooms.get(finishedRoom);
+        if (info && info[finishedLeg]) info[finishedLeg].done = true;
+        maybeMixRecording(finishedRoom);
+      });
     }
     if (room && callLegs.has(room)) {
       delete callLegs.get(room)[leg];
