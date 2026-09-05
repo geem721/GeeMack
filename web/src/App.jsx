@@ -9,6 +9,7 @@ import CameraOCR from "./tabs/CameraOCR.jsx";
 import Documents from "./tabs/Documents.jsx";
 import History from "./tabs/History.jsx";
 import Settings from "./tabs/Settings.jsx";
+import Phone from "./tabs/Phone.jsx";
 import { ROOMS } from "./rooms.js";
 
 // Group Chat and Video Call are lazy-loaded — both pull in Firebase, and Video Call
@@ -30,6 +31,7 @@ const TABS = [
   { key: "documents", label: "Documents", icon: "📄", Component: Documents },
   { key: "groupchat", label: "Group Chat", icon: "💬", Component: GroupChat },
   { key: "videocall", label: "Video Call", icon: "📹", Component: VideoCall },
+  { key: "phone", label: "Phone", icon: "📞", Component: Phone },
   { key: "history", label: "History", icon: "🕐", Component: History },
   { key: "settings", label: "Settings", icon: "⚙️", Component: Settings },
 ];
