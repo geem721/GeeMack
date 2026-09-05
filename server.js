@@ -189,6 +189,28 @@ app.post('/api/call/bridge', async (req, res) => {
   }
 });
 
+app.post('/api/call/hangup', async (req, res) => {
+  const { callASid, callBSid } = req.body;
+  if (!callASid && !callBSid) {
+    return res.status(400).json({ error: 'callASid or callBSid required' });
+  }
+  const results = {};
+  try {
+    if (callASid) {
+      await twilioClient.calls(callASid).update({ status: 'completed' });
+      results.callA = 'completed';
+    }
+    if (callBSid) {
+      await twilioClient.calls(callBSid).update({ status: 'completed' });
+      results.callB = 'completed';
+    }
+    return res.json({ success: true, ...results });
+  } catch (err) {
+    console.error('Hangup error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/api/call/conference-twiml', (req, res) => {
   const room = req.query.room || 'talkbridge-default';
   const twiml = new twilio.twiml.VoiceResponse();
@@ -226,6 +248,8 @@ function toDeepgramLang(code) {
 const server = http.createServer(app);
 const wss = new WebSocketServer({ noServer: true });
 const callWss = new WebSocketServer({ noServer: true });
+const captionWss = new WebSocketServer({ noServer: true });
+const captionSubscribers = new Map(); // room -> Set of ws
 const callLegs = new Map(); // room -> { A: ws, B: ws }
 const CALL_LANG_NAMES = {
   auto:'Auto-Detected', en:'English', es:'Spanish', fr:'French', de:'German',
@@ -538,6 +562,15 @@ callWss.on('connection', (ws) => {
             .then((translated) => {
               console.log(`[call-audio][room=${room} leg=${leg}->${otherLeg}] translated: "${translated}"`);
               speakToLeg(translated, otherInfo);
+              if (otherLeg === 'A') {
+                const subs = captionSubscribers.get(room);
+                if (subs) {
+                  const payload = JSON.stringify({ type: 'caption', text: translated });
+                  subs.forEach((subWs) => {
+                    if (subWs.readyState === subWs.OPEN) subWs.send(payload);
+                  });
+                }
+              }
             })
             .catch((err) => {
               console.error(`[call-audio][room=${room} leg=${leg}] translation error:`, err.message);
@@ -597,6 +630,12 @@ server.on('upgrade', (req, socket, head) => {
     });
     return;
   }
+  if (pathname === '/ws/call-captions') {
+    captionWss.handleUpgrade(req, socket, head, (ws) => {
+      captionWss.emit('connection', ws, req);
+    });
+    return;
+  }
   if (pathname === '/ws/transcribe') {
     wss.handleUpgrade(req, socket, head, (ws) => {
       wss.emit('connection', ws, req);
@@ -604,6 +643,22 @@ server.on('upgrade', (req, socket, head) => {
   } else {
     socket.destroy();
   }
+});
+
+captionWss.on('connection', (ws, req) => {
+  const { searchParams } = new URL(req.url, `http://${req.headers.host}`);
+  const room = searchParams.get('room');
+  if (!room) { ws.close(); return; }
+  if (!captionSubscribers.has(room)) captionSubscribers.set(room, new Set());
+  captionSubscribers.get(room).add(ws);
+  console.log(`[call-captions] subscriber joined room=${room}, total=${captionSubscribers.get(room).size}`);
+  ws.on('close', () => {
+    const subs = captionSubscribers.get(room);
+    if (subs) {
+      subs.delete(ws);
+      if (subs.size === 0) captionSubscribers.delete(room);
+    }
+  });
 });
 
 wss.on('connection', (ws, req) => {
