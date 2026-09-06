@@ -9,6 +9,7 @@ import {
   serverTimestamp,
   set,
   onDisconnect,
+  get,
 } from "firebase/database";
 import { db } from "../firebase.js";
 import { callTranslate } from "../api/translate.js";
@@ -17,20 +18,22 @@ import { useAuth } from "../hooks/useAuth.js";
 import { LANGUAGES } from "../languages.js";
 import { ROOMS } from "../rooms.js";
 import "./GroupChat.css";
-
 // Phase 4 of MIGRATION_PLAN.md. Feature-parity target: public/index.html's Group Chat
 // panel (Firebase Realtime Database rooms, presence, invite links, per-message live
 // translation). Room list (rooms.js) is shared with Video Call (Phase 5), which also
 // uses the room concept for its own invite links and Firebase captions path.
-
+//
+// Transcript export (added this session): unlike Phone's recording (opt-in, mixed audio
+// captured server-side per call), Group Chat's "recording" is already sitting in Firebase
+// as the message history — so this is just a client-side export button. Pulls the FULL
+// room history with a one-time get() (not the limitToLast(50) the live feed uses), formats
+// it as a plain-text log, and triggers a browser download. No server changes needed.
 export default function GroupChat({ initialRoom }) {
   const { user, signOutUser } = useAuth();
   return <GroupChatPanel user={user} onSignOut={signOutUser} initialRoom={initialRoom} />;
 }
-
 function GroupChatPanel({ user, onSignOut, initialRoom }) {
   const { showToast } = useToast();
-
   const [room, setRoom] = useState(
     initialRoom && ROOMS.includes(initialRoom) ? initialRoom : "general",
   );
@@ -43,16 +46,14 @@ function GroupChatPanel({ user, onSignOut, initialRoom }) {
   const [sending, setSending] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [presenceOpen, setPresenceOpen] = useState(false);
-
+  const [exporting, setExporting] = useState(false);
   const feedRef = useRef(null);
   const pendingTranslations = useRef(new Set());
-
   // ── Messages + presence + join event, re-subscribed on room change ────────────────
   useEffect(() => {
     setMessages(null);
     setTranslations({});
     pendingTranslations.current.clear();
-
     const msgsRef = ref(db, `chats/${room}/messages`);
     const msgsQuery = query(msgsRef, limitToLast(50));
     const handleMessages = (snapshot) => {
@@ -67,23 +68,19 @@ function GroupChatPanel({ user, onSignOut, initialRoom }) {
       setMessages(list);
     };
     onValue(msgsQuery, handleMessages);
-
     const presenceRef = ref(db, `chats/${room}/presence`);
     const handlePresence = (snapshot) => {
       const data = snapshot.val() || {};
       setPresence(Object.values(data).filter((u) => u.online));
     };
     onValue(presenceRef, handlePresence);
-
     const myPresenceRef = ref(db, `chats/${room}/presence/${user.uid}`);
     set(myPresenceRef, { email: user.email, online: true, lastSeen: serverTimestamp() });
     const disconnectHandle = onDisconnect(myPresenceRef);
     disconnectHandle.update({ online: false, lastSeen: serverTimestamp() });
-
     push(msgsRef, { type: "join", uid: user.uid, email: user.email, timestamp: serverTimestamp() }).catch(
       (e) => console.warn("Join event failed:", e),
     );
-
     return () => {
       off(msgsQuery, "value", handleMessages);
       off(presenceRef, "value", handlePresence);
@@ -91,12 +88,10 @@ function GroupChatPanel({ user, onSignOut, initialRoom }) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [room, user.uid]);
-
   // Auto-scroll to newest message.
   useEffect(() => {
     if (feedRef.current) feedRef.current.scrollTop = feedRef.current.scrollHeight;
   }, [messages]);
-
   // ── Per-message translation, lazily fetched as messages/target language change ────
   useEffect(() => {
     if (!messages) return;
@@ -124,13 +119,11 @@ function GroupChatPanel({ user, onSignOut, initialRoom }) {
         .finally(() => pendingTranslations.current.delete(pendingKey));
     }
   }, [messages, tgtLang, user.uid, translations]);
-
   const switchRoom = useCallback((r) => {
     setRoom(r);
     setInviteOpen(false);
     setPresenceOpen(false);
   }, []);
-
   async function sendMessage(e) {
     e.preventDefault();
     const text = input.trim();
@@ -152,14 +145,51 @@ function GroupChatPanel({ user, onSignOut, initialRoom }) {
     }
     setSending(false);
   }
-
   function copyInviteLink() {
     const link = `${window.location.origin}${window.location.pathname}?room=${room}`;
     navigator.clipboard
       .writeText(link)
       .then(() => showToast("Invite link copied! Send it to anyone.", 3000));
   }
-
+  // Pulls the FULL message history for the room (not the capped 50 in the live feed),
+  // formats it as a plain-text log, and triggers a browser download. One-time read — no
+  // subscription, no server involvement, since the data's already in Firebase.
+  async function downloadTranscript() {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      const msgsRef = ref(db, `chats/${room}/messages`);
+      const snapshot = await get(msgsRef);
+      const data = snapshot.val();
+      if (!data) {
+        showToast("No messages to export yet", 2500);
+        return;
+      }
+      const list = Object.values(data).sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+      const lines = list.map((msg) => {
+        const ts = msg.timestamp ? new Date(msg.timestamp).toLocaleString() : "";
+        if (msg.type === "join") {
+          return `[${ts}] -- ${msg.email || "Someone"} joined #${room} --`;
+        }
+        return `[${ts}] ${msg.email || "Anonymous"}: ${msg.text || ""}`;
+      });
+      const header = `Transcript for #${room}\nExported ${new Date().toLocaleString()}\n${"=".repeat(40)}\n\n`;
+      const text = header + lines.join("\n") + "\n";
+      const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${room}-transcript-${new Date().toISOString().slice(0, 10)}.txt`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      showToast(`Exported ${list.length} messages`, 2500);
+    } catch (e) {
+      showToast("Export failed: " + e.message, 3000);
+    }
+    setExporting(false);
+  }
   return (
     <div className="gc-tab">
       <div className="gc-toprow">
@@ -183,7 +213,6 @@ function GroupChatPanel({ user, onSignOut, initialRoom }) {
           </button>
         </div>
       </div>
-
       <div className="gc-actionrow">
         <div className="gc-presence-wrap">
           <button className="gc-pill gc-pill-online" onClick={() => setPresenceOpen((v) => !v)}>
@@ -202,11 +231,13 @@ function GroupChatPanel({ user, onSignOut, initialRoom }) {
             </div>
           )}
         </div>
+        <button className="gc-pill" onClick={downloadTranscript} disabled={exporting}>
+          {exporting ? "Exporting…" : "📄 Export transcript"}
+        </button>
         <button className="gc-pill gc-pill-accent" onClick={() => setInviteOpen(true)}>
           ✉️ Invite
         </button>
       </div>
-
       <div className="lang-bar gc-lang-bar">
         <select className="lang-sel" value={srcLang} onChange={(e) => setSrcLang(e.target.value)}>
           {LANGUAGES.map((l) => (
@@ -225,7 +256,6 @@ function GroupChatPanel({ user, onSignOut, initialRoom }) {
         </select>
         <span className="gc-lang-caption">show me</span>
       </div>
-
       <div className="gc-feed" ref={feedRef}>
         {messages === null && <div className="gc-feed-status">Loading…</div>}
         {messages && messages.length === 0 && (
@@ -248,7 +278,6 @@ function GroupChatPanel({ user, onSignOut, initialRoom }) {
             ),
           )}
       </div>
-
       <form className="gc-input-row" onSubmit={sendMessage}>
         <input
           className="gc-input"
@@ -260,7 +289,6 @@ function GroupChatPanel({ user, onSignOut, initialRoom }) {
           {sending ? <span className="spinner" /> : "Send"}
         </button>
       </form>
-
       {inviteOpen && (
         <div className="gc-invite-backdrop" onClick={(e) => e.target === e.currentTarget && setInviteOpen(false)}>
           <div className="gc-invite-box">
@@ -285,7 +313,6 @@ function GroupChatPanel({ user, onSignOut, initialRoom }) {
     </div>
   );
 }
-
 function ChatBubble({ msg, isOwn, translated, sameLang }) {
   const timeStr = msg.timestamp
     ? new Date(msg.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
