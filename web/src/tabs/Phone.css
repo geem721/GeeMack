@@ -58,18 +58,44 @@
   font-size: 14px;
   color: var(--text);
 }
-/* Contacts (added this session) — a horizontally-wrapping row of tappable chips above
-   the "Call this number" field. Kept as simple chips rather than a full list/table since
-   the expected count is small (personal contacts, not an address book import). */
+/* Setup screen layout (this session) — the call form and Contacts run as two side-by-
+   side columns instead of Contacts sitting in its own full-width row above everything.
+   align-items: flex-start keeps both columns starting at the same top edge, which is
+   what puts "Contacts" level with the top of the "Your phone" box. */
+.ph-setup-row {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+.ph-main {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  flex: 1 1 320px;
+  min-width: 0;
+}
+/* Contacts (this session) — a separate column beside the main call-setup box (not
+   overlaid on top of it), with the list running vertically and scrolling once it
+   passes one page instead of the old horizontally-wrapping chip row. See Phone.jsx's
+   updateContactsScrollHint for the "more below" chevron logic. */
 .ph-contacts {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  flex: 0 0 200px;
+  max-width: 65%;
+  position: relative;
 }
 .ph-contact-list {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
+  flex-wrap: nowrap;
   gap: 8px;
+  max-height: 220px;
+  overflow-y: auto;
+  padding-right: 2px;
 }
 .ph-contact-chip {
   display: flex;
@@ -82,6 +108,8 @@
   font-size: 12px;
   cursor: pointer;
   transition: all 0.15s;
+  width: 100%;
+  box-sizing: border-box;
 }
 .ph-contact-chip:hover {
   border-color: var(--accent);
@@ -89,10 +117,16 @@
 .ph-contact-name {
   font-weight: 600;
   color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 .ph-contact-lang {
   color: var(--muted);
   font-size: 11px;
+  flex-shrink: 0;
 }
 .ph-contact-del {
   background: none;
@@ -102,9 +136,24 @@
   line-height: 1;
   cursor: pointer;
   padding: 0 2px;
+  flex-shrink: 0;
 }
 .ph-contact-del:hover {
   color: var(--danger);
+}
+.ph-contact-scroll-hint {
+  position: absolute;
+  bottom: -14px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 14px;
+  color: var(--muted);
+  pointer-events: none;
+  animation: ph-contact-bounce 1.2s infinite;
+}
+@keyframes ph-contact-bounce {
+  0%, 100% { transform: translateX(-50%) translateY(0); }
+  50% { transform: translateX(-50%) translateY(3px); }
 }
 .ph-save-contact-btn {
   width: 100%;

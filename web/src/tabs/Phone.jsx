@@ -24,6 +24,13 @@ import "./Phone.css";
 // already use — see hooks/useContacts.js. Tapping a contact fills in their number and
 // language; "Save as contact" stores whatever's currently entered.
 //
+// Contacts layout (this session): pinned to the top-right corner of the tab (align-self:
+// flex-end in Phone.css) with the list running vertically and scrolling past one page,
+// instead of the old horizontally-wrapping chip row. contactListRef + updateContactsScrollHint
+// detect real overflow (scrollHeight vs clientHeight, re-checked on scroll and whenever the
+// contact count changes) so the "more below" chevron only shows when there's actually
+// something to scroll to.
+//
 // Recording (this session): opt-in per call, default OFF. When enabled, /api/call/bridge
 // threads record=1 into each leg's stream-twiml URL; server.js plays an audible consent
 // notice to both parties before connecting the stream (two-party consent laws), captures
@@ -66,9 +73,11 @@ export default function Phone() {
   const [newContactName, setNewContactName] = useState("");
   const [lastRecordingRoom, setLastRecordingRoom] = useState(null);
   const [recordingReady, setRecordingReady] = useState(false);
+  const [contactsScrollable, setContactsScrollable] = useState(false);
 
   const callRef = useRef({ room: null, callASid: null, callBSid: null, recorded: false });
   const captionWsRef = useRef(null);
+  const contactListRef = useRef(null);
 
   function connectCaptions(room) {
     const wsProtocol = location.protocol === "https:" ? "wss:" : "ws:";
@@ -234,14 +243,121 @@ export default function Phone() {
     }
   }
 
+  // Whether the contact list has more content below the fold — recomputed on scroll and
+  // whenever the contact count changes (adding a contact can push the list past one page
+  // even if the user hasn't scrolled at all).
+  function updateContactsScrollHint() {
+    const el = contactListRef.current;
+    if (!el) {
+      setContactsScrollable(false);
+      return;
+    }
+    setContactsScrollable(el.scrollHeight - el.scrollTop - el.clientHeight > 4);
+  }
+
+  useEffect(() => {
+    updateContactsScrollHint();
+  }, [contacts]);
+
   return (
     <div className="ph-tab">
       {!callActive ? (
-        <>
+        <div className="ph-setup-row">
+          <div className="ph-main">
+            {lastRecordingRoom && (
+              recordingReady ? (
+                <a
+                  className="ph-recording-link"
+                  href={`/api/call/recording/${lastRecordingRoom}`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  🎙️ Download last call's recording
+                </a>
+              ) : (
+                <div className="ph-recording-link ph-recording-pending">
+                  <span className="spinner" /> Processing recording…
+                </div>
+              )
+            )}
+            <div className="quick-settings">
+              <div className="settings-title">Your phone</div>
+              <input
+                className="ph-input"
+                type="tel"
+                placeholder="Your phone number"
+                value={myPhone}
+                onChange={(e) => setMyPhone(e.target.value)}
+                disabled={connecting}
+              />
+              <div className="lang-bar">
+                <select className="lang-sel" value={myLang} onChange={(e) => setMyLang(e.target.value)}>
+                  {LANGUAGES.map((l) => (
+                    <option key={l.code} value={l.code}>
+                      {l.flag} {l.label}
+                    </option>
+                  ))}
+                </select>
+                <span className="gc-lang-caption">you speak</span>
+              </div>
+            </div>
+            <div className="quick-settings">
+              <div className="settings-title">Call this number</div>
+              <input
+                className="ph-input"
+                type="tel"
+                placeholder="Their phone number"
+                value={theirPhone}
+                onChange={(e) => setTheirPhone(e.target.value)}
+                disabled={connecting}
+              />
+              <div className="lang-bar">
+                <select
+                  className="lang-sel"
+                  value={theirLang}
+                  onChange={(e) => setTheirLang(e.target.value)}
+                >
+                  {LANGUAGES.map((l) => (
+                    <option key={l.code} value={l.code}>
+                      {l.flag} {l.label}
+                    </option>
+                  ))}
+                </select>
+                <span className="gc-lang-caption">they speak</span>
+              </div>
+              <button
+                className="btn btn-secondary ph-save-contact-btn"
+                onClick={() => setSavingContact(true)}
+                disabled={!theirPhone.trim()}
+              >
+                💾 Save as contact
+              </button>
+            </div>
+            <label className="settings-checkbox">
+              <input type="checkbox" checked={captionsOn} onChange={toggleCaptions} />
+              Show live captions during the call
+            </label>
+            <label className="settings-checkbox">
+              <input
+                type="checkbox"
+                checked={recordOn}
+                onChange={(e) => setRecordOn(e.target.checked)}
+                disabled={connecting}
+              />
+              🎙️ Record this call (both parties will hear a notice)
+            </label>
+            <button className="btn btn-primary ph-call-btn" onClick={startCall} disabled={connecting}>
+              {connecting ? <span className="spinner" /> : "📞 Start Call"}
+            </button>
+          </div>
           {contacts.length > 0 && (
             <div className="ph-contacts">
               <div className="settings-title">Contacts</div>
-              <div className="ph-contact-list">
+              <div
+                className="ph-contact-list"
+                ref={contactListRef}
+                onScroll={updateContactsScrollHint}
+              >
                 {contacts.map((c) => (
                   <div key={c.id} className="ph-contact-chip" onClick={() => selectContact(c)}>
                     <span className="ph-contact-name">{c.name}</span>
@@ -259,94 +375,14 @@ export default function Phone() {
                   </div>
                 ))}
               </div>
+              {contactsScrollable && (
+                <div className="ph-contact-scroll-hint" aria-hidden="true">
+                  ⌄
+                </div>
+              )}
             </div>
           )}
-          {lastRecordingRoom && (
-            recordingReady ? (
-              <a
-                className="ph-recording-link"
-                href={`/api/call/recording/${lastRecordingRoom}`}
-                target="_blank"
-                rel="noreferrer"
-              >
-                🎙️ Download last call's recording
-              </a>
-            ) : (
-              <div className="ph-recording-link ph-recording-pending">
-                <span className="spinner" /> Processing recording…
-              </div>
-            )
-          )}
-          <div className="quick-settings">
-            <div className="settings-title">Your phone</div>
-            <input
-              className="ph-input"
-              type="tel"
-              placeholder="Your phone number"
-              value={myPhone}
-              onChange={(e) => setMyPhone(e.target.value)}
-              disabled={connecting}
-            />
-            <div className="lang-bar">
-              <select className="lang-sel" value={myLang} onChange={(e) => setMyLang(e.target.value)}>
-                {LANGUAGES.map((l) => (
-                  <option key={l.code} value={l.code}>
-                    {l.flag} {l.label}
-                  </option>
-                ))}
-              </select>
-              <span className="gc-lang-caption">you speak</span>
-            </div>
-          </div>
-          <div className="quick-settings">
-            <div className="settings-title">Call this number</div>
-            <input
-              className="ph-input"
-              type="tel"
-              placeholder="Their phone number"
-              value={theirPhone}
-              onChange={(e) => setTheirPhone(e.target.value)}
-              disabled={connecting}
-            />
-            <div className="lang-bar">
-              <select
-                className="lang-sel"
-                value={theirLang}
-                onChange={(e) => setTheirLang(e.target.value)}
-              >
-                {LANGUAGES.map((l) => (
-                  <option key={l.code} value={l.code}>
-                    {l.flag} {l.label}
-                  </option>
-                ))}
-              </select>
-              <span className="gc-lang-caption">they speak</span>
-            </div>
-            <button
-              className="btn btn-secondary ph-save-contact-btn"
-              onClick={() => setSavingContact(true)}
-              disabled={!theirPhone.trim()}
-            >
-              💾 Save as contact
-            </button>
-          </div>
-          <label className="settings-checkbox">
-            <input type="checkbox" checked={captionsOn} onChange={toggleCaptions} />
-            Show live captions during the call
-          </label>
-          <label className="settings-checkbox">
-            <input
-              type="checkbox"
-              checked={recordOn}
-              onChange={(e) => setRecordOn(e.target.checked)}
-              disabled={connecting}
-            />
-            🎙️ Record this call (both parties will hear a notice)
-          </label>
-          <button className="btn btn-primary ph-call-btn" onClick={startCall} disabled={connecting}>
-            {connecting ? <span className="spinner" /> : "📞 Start Call"}
-          </button>
-        </>
+        </div>
       ) : (
         <div className="ph-active">
           <div className="ph-active-title">📞 Call in progress</div>
