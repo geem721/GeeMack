@@ -74,3 +74,14 @@
   max-height: 40px;
   overflow: hidden;
 }
+
+.vc-recording-banner {
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: var(--danger);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  text-align: center;
+}

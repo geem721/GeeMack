@@ -265,6 +265,59 @@ app.get('/api/call/recording/:room', (req, res) => {
   }
   res.download(filePath, `talkbridge-call-${room}.wav`);
 });
+// --- Video call recording (chunked upload from the browser's canvas+WebAudio
+// compositor - see VideoCall.jsx). Uploaded in ~5s chunks as the call happens rather
+// than one file at the end, so a crashed tab or dropped connection only loses the last
+// few seconds. LiveKit's self-hosted Egress was considered and rejected for this: it
+// needs Redis wired into the live production LiveKit server and only supports
+// S3/Azure/GCS output, not a local file on Apollo1 (confirmed against LiveKit's own
+// docs, Sept 6 session) - a plain chunked upload avoids both problems entirely. ---
+app.post('/api/videocall/recording/start', (req, res) => {
+  const { room } = req.body;
+  if (!room || !/^[a-zA-Z0-9_-]+$/.test(room)) {
+    return res.status(400).json({ error: 'Invalid room id' });
+  }
+  const recordingId = `videocall-${room}-${Date.now()}`;
+  const tmpPath = path.join(RECORDINGS_DIR, `${recordingId}.webm.part`);
+  const stream = fs.createWriteStream(tmpPath);
+  videoRecordingSessions.set(recordingId, { stream, room, tmpPath, lastActivity: Date.now() });
+  console.log(`[videocall-recording] started ${recordingId}`);
+  res.json({ recordingId });
+});
+app.post('/api/videocall/recording/:id/chunk', express.raw({ type: '*/*', limit: '25mb' }), (req, res) => {
+  const session = videoRecordingSessions.get(req.params.id);
+  if (!session) return res.status(404).json({ error: 'No such recording session (it may have already been stopped or timed out)' });
+  session.lastActivity = Date.now();
+  session.stream.write(req.body, (err) => {
+    if (err) {
+      console.error(`[videocall-recording] write failed for ${req.params.id}:`, err);
+      return res.status(500).json({ error: 'Write failed' });
+    }
+    res.sendStatus(200);
+  });
+});
+app.post('/api/videocall/recording/:id/stop', (req, res) => {
+  const session = videoRecordingSessions.get(req.params.id);
+  if (!session) return res.status(404).json({ error: 'No such recording session' });
+  finalizeVideoRecordingSession(req.params.id, session);
+  res.json({ ok: true });
+});
+app.get('/api/videocall/recording/:room', (req, res) => {
+  const room = req.params.room;
+  if (!/^[a-zA-Z0-9_-]+$/.test(room)) {
+    return res.status(400).json({ error: 'Invalid room id' });
+  }
+  fs.readdir(RECORDINGS_DIR, (err, files) => {
+    if (err) return res.status(500).json({ error: 'Could not read recordings' });
+    const matches = files.filter((f) => f.startsWith(`videocall-${room}-`) && f.endsWith('.webm'));
+    if (matches.length === 0) {
+      return res.status(404).json({ error: 'No recording found for this room' });
+    }
+    matches.sort();
+    const latest = matches[matches.length - 1];
+    res.download(path.join(RECORDINGS_DIR, latest), `talkbridge-videocall-${room}.webm`);
+  });
+});
 
 // --- Real-time captioning: /ws/transcribe ---
 const deepgram = createClient(process.env.DEEPGRAM_API_KEY);
@@ -285,6 +338,65 @@ const captionSubscribers = new Map(); // room -> Set of ws
 const callLegs = new Map(); // room -> { A: ws, B: ws }
 const RECORDINGS_DIR = path.join(__dirname, 'recordings');
 fs.mkdirSync(RECORDINGS_DIR, { recursive: true });
+// Retention: recordings (phone .wav, video call .webm) and any orphaned in-progress
+// .webm.part files (a video recording whose browser tab crashed/closed before calling
+// the /stop endpoint) are auto-deleted on a schedule so Apollo1's disk doesn't fill up
+// as call volume grows. Orphaned .part files get a much shorter grace period since they
+// can never be completed - unlike a finished recording someone might come back for.
+const RECORDING_RETENTION_DAYS = 30;
+const ORPHAN_PART_RETENTION_MS = 24 * 60 * 60 * 1000; // 1 day
+function cleanupOldRecordings() {
+  fs.readdir(RECORDINGS_DIR, (err, files) => {
+    if (err) return console.error('[recording] cleanup readdir failed:', err);
+    const now = Date.now();
+    files.forEach((file) => {
+      const filePath = path.join(RECORDINGS_DIR, file);
+      fs.stat(filePath, (statErr, stats) => {
+        if (statErr) return;
+        const maxAge = file.endsWith('.part')
+          ? ORPHAN_PART_RETENTION_MS
+          : RECORDING_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+        if (now - stats.mtimeMs > maxAge) {
+          fs.unlink(filePath, (unlinkErr) => {
+            if (!unlinkErr) console.log(`[recording] deleted old file (retention): ${file}`);
+          });
+        }
+      });
+    });
+  });
+}
+cleanupOldRecordings();
+setInterval(cleanupOldRecordings, 24 * 60 * 60 * 1000);
+// In-memory video call recording sessions (chunked upload in progress) - see the
+// /api/videocall/recording/* routes below. A session with no chunk activity for 5
+// minutes is assumed abandoned (crashed/closed tab that never called /stop) and is
+// auto-finalized so it doesn't leak an open file handle or sit in this Map forever.
+const videoRecordingSessions = new Map(); // recordingId -> { stream, room, tmpPath, lastActivity }
+function finalizeVideoRecordingSession(recordingId, session) {
+  videoRecordingSessions.delete(recordingId);
+  session.stream.end(() => {
+    const finalPath = session.tmpPath.replace(/\.part$/, '');
+    fs.stat(session.tmpPath, (err, stats) => {
+      if (err) return;
+      if (stats.size === 0) {
+        fs.unlink(session.tmpPath, () => {});
+        return;
+      }
+      fs.rename(session.tmpPath, finalPath, (renameErr) => {
+        if (!renameErr) console.log(`[videocall-recording] finalized ${finalPath}`);
+      });
+    });
+  });
+}
+setInterval(() => {
+  const cutoff = Date.now() - 5 * 60 * 1000;
+  for (const [id, session] of videoRecordingSessions.entries()) {
+    if (session.lastActivity < cutoff) {
+      console.log(`[videocall-recording] auto-finalizing abandoned session ${id} (no activity for 5min)`);
+      finalizeVideoRecordingSession(id, session);
+    }
+  }
+}, 60 * 1000);
 const recordingRooms = new Map(); // room -> { A: {path, done}, B: {path, done} }
 const roomBySid = new Map(); // callSid -> room (only tracked when recording is on, for no-answer cleanup)
 function cleanupFailedRecording(room) {
