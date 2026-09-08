@@ -5,6 +5,7 @@
     "@livekit/components-react": "^2.9.21",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "jose": "^6.2.12",
     "livekit-client": "^2.20.0",
     "livekit-server-sdk": "^2.15.5",
     "twilio": "^6.1.0",

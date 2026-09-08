@@ -10,6 +10,7 @@ import deepgramSdk from '@deepgram/sdk';
 const { createClient, LiveTranscriptionEvents } = deepgramSdk;
 import { AccessToken } from 'livekit-server-sdk';
 import twilio from 'twilio';
+import { createRemoteJWKSet, jwtVerify } from 'jose';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -20,9 +21,84 @@ app.use(express.urlencoded({ extended: false }));
 app.use(express.static(path.join(__dirname, 'public')));
 const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 
+// --- Firebase ID token verification (no Admin SDK / service-account key needed) ---
+// Verifies the JWT Firebase Auth issues against Google's public keys. Used to identify
+// the calling user for /api/translate's monthly fair-use cap, without pulling in
+// firebase-admin (which needs a service-account key -- the same kind of GCP key-creation
+// operation blocked by this org's iam.disableServiceAccountKeyCreation policy).
+const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID;
+const FIREBASE_JWKS = createRemoteJWKSet(
+  new URL('https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com')
+);
+async function verifyFirebaseToken(req) {
+  const authHeader = req.headers.authorization || '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+  if (!token) return null;
+  try {
+    const { payload } = await jwtVerify(token, FIREBASE_JWKS, {
+      issuer: `https://securetoken.google.com/${FIREBASE_PROJECT_ID}`,
+      audience: FIREBASE_PROJECT_ID,
+    });
+    return payload.sub; // Firebase uid
+  } catch (err) {
+    console.warn('[auth] Firebase ID token rejected:', err.message);
+    return null;
+  }
+}
+
+// --- Monthly translation fair-use cap (574 msgs/user/month) ---
+// Usage counted in Firebase RTDB at usage/{uid}/{yyyy-mm}/count via RTDB's built-in
+// atomic server-side increment (.sv increment) over plain REST + a database secret --
+// same no-Admin-SDK reasoning as above.
+const FIREBASE_DB_URL = process.env.FIREBASE_DB_URL;
+const FIREBASE_DB_SECRET = process.env.FIREBASE_DB_SECRET;
+const MONTHLY_TRANSLATE_CAP = 574;
+function currentMonthKey() {
+  const d = new Date();
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+async function getMonthlyTranslateUsage(uid) {
+  const url = `${FIREBASE_DB_URL}/usage/${uid}/${currentMonthKey()}/count.json?auth=${FIREBASE_DB_SECRET}`;
+  try {
+    const res = await fetch(url);
+    const val = await res.json();
+    if (!res.ok || (val && typeof val === 'object' && val.error)) {
+      console.error('[translate-cap] usage read failed:', res.status, JSON.stringify(val));
+      return 0; // fail open -- a read error shouldn't block a real user
+    }
+    return typeof val === 'number' ? val : 0;
+  } catch (err) {
+    console.error('[translate-cap] usage read failed:', err.message);
+    return 0;
+  }
+}
+async function incrementMonthlyTranslateUsage(uid) {
+  const url = `${FIREBASE_DB_URL}/usage/${uid}/${currentMonthKey()}.json?auth=${FIREBASE_DB_SECRET}`;
+  try {
+    const res = await fetch(url, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ count: { '.sv': { increment: 1 } } }),
+    });
+    const val = await res.json();
+    if (!res.ok || (val && typeof val === 'object' && val.error)) {
+      console.error('[translate-cap] increment failed:', res.status, JSON.stringify(val));
+    }
+  } catch (err) {
+    console.error('[translate-cap] increment failed:', err.message);
+  }
+}
+
 app.post('/api/translate', async (req, res) => {
   const { text, srcLang, tgtLang } = req.body;
   if (!text) return res.status(400).json({ error: 'No text provided' });
+
+  const uid = await verifyFirebaseToken(req);
+  if (!uid) return res.status(401).json({ error: 'Sign in required to translate.' });
+  const usage = await getMonthlyTranslateUsage(uid);
+  if (usage >= MONTHLY_TRANSLATE_CAP) {
+    return res.status(429).json({ error: `Monthly translation limit reached (${MONTHLY_TRANSLATE_CAP}). Resets at the start of next month.` });
+  }
 
   const LANG_NAMES = {
     auto:'Auto-Detected', en:'English', es:'Spanish', fr:'French', de:'German',
@@ -92,6 +168,7 @@ app.post('/api/translate', async (req, res) => {
 
     const toolUse = data.content?.find(b => b.type === 'tool_use' && b.name === 'provide_translation');
     if (toolUse?.input?.translation !== undefined) {
+      incrementMonthlyTranslateUsage(uid);
       return res.status(200).json(toolUse.input);
     }
 
@@ -99,6 +176,7 @@ app.post('/api/translate', async (req, res) => {
     // safety net rather than a hard 500 if the API ever returns a plain text block
     // instead (e.g. a refusal).
     const raw = data.content?.find(b => b.type === 'text')?.text || '';
+    incrementMonthlyTranslateUsage(uid);
     return res.status(200).json({
       detected: srcLang,
       detectedName: srcName,
@@ -367,6 +445,54 @@ function cleanupOldRecordings() {
 }
 cleanupOldRecordings();
 setInterval(cleanupOldRecordings, 24 * 60 * 60 * 1000);
+
+// Retention: Group Chat message history (chats/{room}/messages in Firebase RTDB) grows
+// forever otherwise -- the client's limitToLast(50) only bounds what's displayed, not
+// what's stored. Same daily-sweep shape as cleanupOldRecordings() above, but hits the
+// RTDB REST API (database secret, not Admin SDK) instead of the filesystem. 180 days,
+// not 30: unlike call recordings, chat text is cheap to keep and people expect to be
+// able to scroll back further.
+const CHAT_RETENTION_DAYS = 180;
+async function cleanupOldChatMessages() {
+  if (!FIREBASE_DB_URL || !FIREBASE_DB_SECRET) return;
+  try {
+    const roomsRes = await fetch(`${FIREBASE_DB_URL}/chats.json?shallow=true&auth=${FIREBASE_DB_SECRET}`);
+    const rooms = await roomsRes.json();
+    if (!roomsRes.ok || (rooms && typeof rooms === 'object' && rooms.error)) {
+      console.error('[chat-retention] room list read failed:', roomsRes.status, JSON.stringify(rooms));
+      return;
+    }
+    if (!rooms) return;
+    const cutoff = Date.now() - CHAT_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+    for (const room of Object.keys(rooms)) {
+      const msgsUrl = `${FIREBASE_DB_URL}/chats/${room}/messages.json?orderBy="timestamp"&endAt=${cutoff}&auth=${FIREBASE_DB_SECRET}`;
+      const msgsRes = await fetch(msgsUrl);
+      const oldMsgs = await msgsRes.json();
+      if (!msgsRes.ok || (oldMsgs && typeof oldMsgs === 'object' && oldMsgs.error)) {
+        console.error(`[chat-retention] message read failed for #${room}:`, msgsRes.status, JSON.stringify(oldMsgs));
+        continue;
+      }
+      if (!oldMsgs) continue;
+      const ids = Object.keys(oldMsgs);
+      if (ids.length === 0) continue;
+      const deletePatch = Object.fromEntries(ids.map((id) => [id, null]));
+      const delRes = await fetch(`${FIREBASE_DB_URL}/chats/${room}/messages.json?auth=${FIREBASE_DB_SECRET}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(deletePatch),
+      });
+      if (!delRes.ok) {
+        console.error(`[chat-retention] delete failed for #${room}:`, delRes.status);
+        continue;
+      }
+      console.log(`[chat-retention] deleted ${ids.length} old message(s) from #${room}`);
+    }
+  } catch (err) {
+    console.error('[chat-retention] cleanup failed:', err.message);
+  }
+}
+cleanupOldChatMessages();
+setInterval(cleanupOldChatMessages, 24 * 60 * 60 * 1000);
 // In-memory video call recording sessions (chunked upload in progress) - see the
 // /api/videocall/recording/* routes below. A session with no chunk activity for 5
 // minutes is assumed abandoned (crashed/closed tab that never called /stop) and is
