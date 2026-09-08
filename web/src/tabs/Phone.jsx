@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useToast } from "../components/Toast.jsx";
 import Modal from "../components/Modal.jsx";
 import { useAuth } from "../hooks/useAuth.js";
+import { auth } from "../firebase.js";
 import { useContacts } from "../hooks/useContacts.js";
 import { LANGUAGES, languageLabel } from "../languages.js";
 import "./Phone.css";
@@ -181,13 +182,18 @@ export default function Phone() {
       showToast("Enter both phone numbers first", 2500);
       return;
     }
+    if (!user) {
+      showToast("Sign in required to place a call", 2500);
+      return;
+    }
     localStorage.setItem(MY_PHONE_KEY, myPhone.trim());
     setLastRecordingRoom(null);
     setConnecting(true);
     try {
+      const idToken = await auth.currentUser.getIdToken();
       const res = await fetch("/api/call/bridge", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
         body: JSON.stringify({ partyA: a, partyB: b, langA: myLang, langB: theirLang, record: recordOn }),
       });
       const data = await res.json();

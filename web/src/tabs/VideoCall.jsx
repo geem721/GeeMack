@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Room, RoomEvent, createLocalVideoTrack, createLocalAudioTrack } from "livekit-client";
 import { ref, push, onValue, off, query, limitToLast, serverTimestamp, set } from "firebase/database";
-import { db } from "../firebase.js";
+import { auth, db } from "../firebase.js";
 import { callTranslate } from "../api/translate.js";
 import { useToast } from "../components/Toast.jsx";
 import { useAuth } from "../hooks/useAuth.js";
@@ -64,6 +64,7 @@ function VideoCallPanel({ user, onSignOut, initialRoom }) {
   const [lastRecordingRoom, setLastRecordingRoom] = useState(null); // room a recording I made just finished for
   const gridRef = useRef(null);
   const livekitRoomRef = useRef(null);
+  const videoHeartbeatRef = useRef(null);
   const captionWsRef = useRef(null);
   const captionRecorderRef = useRef(null);
   const captionOffRef = useRef(null);
@@ -476,9 +477,10 @@ function VideoCallPanel({ user, onSignOut, initialRoom }) {
   async function joinCall() {
     setConnecting(true);
     try {
+      const idToken = await auth.currentUser.getIdToken();
       const res = await fetch("/api/livekit-token", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
         body: JSON.stringify({ roomName: room, participantName: user.email }),
       });
       const { token, url, error } = await res.json();
@@ -505,6 +507,27 @@ function VideoCallPanel({ user, onSignOut, initialRoom }) {
       showToast("Video call started!");
       startCaptionStream();
       listenToCaptions(room);
+      // Monthly video-minute usage heartbeat -- pings the server every 30s while the
+      // call is active so usage is tracked server-side (not trusted from the client).
+      // If the monthly cap is hit mid-call, the server tells us on the next ping and
+      // we leave the call automatically.
+      videoHeartbeatRef.current = setInterval(async () => {
+        try {
+          const hbToken = await auth.currentUser.getIdToken();
+          const hbRes = await fetch("/api/videocall/heartbeat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${hbToken}` },
+            body: JSON.stringify({ room }),
+          });
+          const hbData = await hbRes.json();
+          if (!hbData.ok) {
+            showToast(hbData.error || "Monthly video call limit reached", 4000);
+            await leaveCall();
+          }
+        } catch (e) {
+          // network hiccup -- skip this tick, try again on the next one
+        }
+      }, 30000);
     } catch (e) {
       console.error("Video error:", e);
       showToast("Could not start video: " + e.message, 3000);
@@ -516,6 +539,10 @@ function VideoCallPanel({ user, onSignOut, initialRoom }) {
     setConnecting(false);
   }
   async function leaveCall() {
+    if (videoHeartbeatRef.current) {
+      clearInterval(videoHeartbeatRef.current);
+      videoHeartbeatRef.current = null;
+    }
     if (isRecordingMineRef.current) {
       await stopRecording();
     }

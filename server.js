@@ -97,7 +97,7 @@ app.post('/api/translate', async (req, res) => {
   if (!uid) return res.status(401).json({ error: 'Sign in required to translate.' });
   const usage = await getMonthlyTranslateUsage(uid);
   if (usage >= MONTHLY_TRANSLATE_CAP) {
-    return res.status(429).json({ error: `Monthly translation limit reached (${MONTHLY_TRANSLATE_CAP}). Resets at the start of next month.` });
+    return res.status(429).json({ error: `Monthly translation limit reached (${MONTHLY_TRANSLATE_CAP}). Resets at the start of next month. (Option to purchase more credits coming soon.)` });
   }
 
   const LANG_NAMES = {
@@ -151,7 +151,7 @@ app.post('/api/translate', async (req, res) => {
         'anthropic-version': '2023-06-01'
       },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-6',
+        model: 'claude-sonnet-5',
         // 4096 gives real headroom for a ~3000-char document chunk in any target
         // language without being an unbounded blank check (see prior session's fix for
         // the truncation bug this was originally raised to 4096 for).
@@ -188,10 +188,116 @@ app.post('/api/translate', async (req, res) => {
   }
 });
 
+// =====================================================================================
+// Phone / Video Call monthly usage caps -- Sept 8 2026 (Greg's call): prevent a user
+// from running up Twilio/Deepgram/TTS charges beyond what the Starter tier's $27.99/mo
+// actually covers. Same fail-open RTDB pattern as the 574/mo translate cap above: an
+// RTDB error logs clearly and lets the request through rather than blocking real usage
+// over an infra hiccup. Sized from TalkBridge_Cost_Cap_Model.xlsx (Tier Caps sheet,
+// Starter row): 35 min/mo domestic phone, 13 min/mo international phone, 609 min/mo
+// video. Every account gets the Starter allotment for now -- there's no live
+// tier-selection or billing yet (blocked on LLC formation), so this is the same flat
+// free/beta cap approach already used for the 574 translate cap.
+// =====================================================================================
+const PHONE_DOMESTIC_CAP_SEC = 35 * 60;
+const PHONE_INTL_CAP_SEC = 13 * 60;
+const VIDEO_MONTHLY_CAP_SEC = 609 * 60;
+// Hard per-call safety net independent of the monthly cap -- caps any single call at
+// 90 minutes so one forgotten/stuck-open call can't itself blow past a user's whole
+// monthly allotment before the after-the-fact usage increment (below) ever runs.
+// Twilio hangs the call up itself when this is hit.
+const CALL_HARD_TIME_LIMIT_SEC = 90 * 60;
+
+// CallSid -> { uid, route, leg } for calls placed via /api/call/bridge, used by
+// /api/call/status to attribute Twilio's own reported CallDuration back to a user once
+// the call actually completes (source of truth for phone minutes -- not client-reported).
+const callUsageMeta = new Map();
+
+// NANP (North American Numbering Plan, +1) covers US + Canada -- the only "domestic"
+// countries in V1 scope. Everything else in scope (+44 UK, +49 Germany, +33 France,
+// +81 Japan) is "international" for cap purposes.
+function isNanpNumber(e164) {
+  return typeof e164 === 'string' && e164.startsWith('+1');
+}
+
+async function getMonthlyPhoneUsageSec(uid, route) {
+  const field = route === 'domestic' ? 'domesticSec' : 'internationalSec';
+  const url = `${FIREBASE_DB_URL}/usage/phone/${currentMonthKey()}/${uid}/${field}.json?auth=${FIREBASE_DB_SECRET}`;
+  try {
+    const res = await fetch(url);
+    const val = await res.json();
+    if (!res.ok || (val && typeof val === 'object' && val.error)) {
+      console.error('[phone-cap] usage read failed:', res.status, JSON.stringify(val));
+      return 0; // fail open -- a read error shouldn't block a real user
+    }
+    return typeof val === 'number' ? val : 0;
+  } catch (err) {
+    console.error('[phone-cap] usage read failed:', err.message);
+    return 0;
+  }
+}
+async function incrementMonthlyPhoneUsageSec(uid, route, seconds) {
+  if (!seconds || seconds <= 0) return;
+  const field = route === 'domestic' ? 'domesticSec' : 'internationalSec';
+  const url = `${FIREBASE_DB_URL}/usage/phone/${currentMonthKey()}/${uid}.json?auth=${FIREBASE_DB_SECRET}`;
+  try {
+    const res = await fetch(url, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ [field]: { '.sv': { increment: seconds } } }),
+    });
+    const val = await res.json();
+    if (!res.ok || (val && typeof val === 'object' && val.error)) {
+      console.error('[phone-cap] increment failed:', res.status, JSON.stringify(val));
+    }
+  } catch (err) {
+    console.error('[phone-cap] increment failed:', err.message);
+  }
+}
+
+async function getMonthlyVideoUsageSec(uid) {
+  const url = `${FIREBASE_DB_URL}/usage/video/${currentMonthKey()}/${uid}.json?auth=${FIREBASE_DB_SECRET}`;
+  try {
+    const res = await fetch(url);
+    const val = await res.json();
+    if (!res.ok || (val && typeof val === 'object' && val.error)) {
+      console.error('[video-cap] usage read failed:', res.status, JSON.stringify(val));
+      return 0;
+    }
+    return typeof val === 'number' ? val : 0;
+  } catch (err) {
+    console.error('[video-cap] usage read failed:', err.message);
+    return 0;
+  }
+}
+async function incrementMonthlyVideoUsageSec(uid, seconds) {
+  if (!seconds || seconds <= 0) return;
+  const url = `${FIREBASE_DB_URL}/usage/video/${currentMonthKey()}.json?auth=${FIREBASE_DB_SECRET}`;
+  try {
+    const res = await fetch(url, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ [uid]: { '.sv': { increment: seconds } } }),
+    });
+    const val = await res.json();
+    if (!res.ok || (val && typeof val === 'object' && val.error)) {
+      console.error('[video-cap] increment failed:', res.status, JSON.stringify(val));
+    }
+  } catch (err) {
+    console.error('[video-cap] increment failed:', err.message);
+  }
+}
+
 app.post('/api/livekit-token', async (req, res) => {
   const { roomName, participantName } = req.body;
   if (!roomName || !participantName) {
     return res.status(400).json({ error: 'roomName and participantName are required' });
+  }
+  const uid = await verifyFirebaseToken(req);
+  if (!uid) return res.status(401).json({ error: 'Sign in required for Video Call.' });
+  const videoUsageSec = await getMonthlyVideoUsageSec(uid);
+  if (videoUsageSec >= VIDEO_MONTHLY_CAP_SEC) {
+    return res.status(429).json({ error: `Monthly video call limit reached (${Math.round(VIDEO_MONTHLY_CAP_SEC / 60)} min). Resets at the start of next month. (Option to purchase more credits coming soon.)` });
   }
   try {
     const at = new AccessToken(
@@ -206,6 +312,25 @@ app.post('/api/livekit-token', async (req, res) => {
     console.error('LiveKit token error:', err);
     return res.status(500).json({ error: err.message });
   }
+});
+
+// --- Video call usage heartbeat -- client pings this every 30s while in an active
+// video call; server ticks the caller's monthly video-minute usage by the same amount
+// and tells the client to leave if the monthly cap is now exceeded. This is the
+// enforcement point for a call already in progress (the check above only blocks a NEW
+// call from starting); duration is measured server-side from these pings rather than
+// trusted from the client, so a client can under-report (lose tracking) but not
+// over-claim free minutes.
+const VIDEO_HEARTBEAT_SEC = 30;
+app.post('/api/videocall/heartbeat', async (req, res) => {
+  const uid = await verifyFirebaseToken(req);
+  if (!uid) return res.status(401).json({ error: 'Sign in required.' });
+  await incrementMonthlyVideoUsageSec(uid, VIDEO_HEARTBEAT_SEC);
+  const usageSec = await getMonthlyVideoUsageSec(uid);
+  if (usageSec >= VIDEO_MONTHLY_CAP_SEC) {
+    return res.status(200).json({ ok: false, error: `Monthly video call limit reached (${Math.round(VIDEO_MONTHLY_CAP_SEC / 60)} min). Resets at the start of next month. (Option to purchase more credits coming soon.)` });
+  }
+  return res.status(200).json({ ok: true });
 });
 
 // --- Outbound phone call (Twilio Voice) ---
@@ -239,11 +364,21 @@ const FAILED_CALL_STATUSES = new Set(['no-answer', 'busy', 'failed', 'canceled']
 app.post('/api/call/status', (req, res) => {
   const status = req.body?.CallStatus;
   const sid = req.body?.CallSid;
-  console.log('Call status update:', status, sid);
+  const duration = req.body?.CallDuration; // seconds -- Twilio only sends this on 'completed'
+  console.log('Call status update:', status, sid, duration ? `duration=${duration}s` : '');
   if (FAILED_CALL_STATUSES.has(status) && roomBySid.has(sid)) {
     const room = roomBySid.get(sid);
     roomBySid.delete(sid);
     cleanupFailedRecording(room);
+  }
+  if (callUsageMeta.has(sid)) {
+    const meta = callUsageMeta.get(sid);
+    if (status === 'completed' || FAILED_CALL_STATUSES.has(status)) {
+      callUsageMeta.delete(sid);
+      if (meta.leg === 'A' && status === 'completed' && duration) {
+        incrementMonthlyPhoneUsageSec(meta.uid, meta.route, parseInt(duration, 10) || 0);
+      }
+    }
   }
   res.sendStatus(200);
 });
@@ -254,6 +389,19 @@ app.post('/api/call/bridge', async (req, res) => {
   if (!partyA || !partyB) {
     return res.status(400).json({ error: 'partyA and partyB phone numbers are required' });
   }
+  const uid = await verifyFirebaseToken(req);
+  if (!uid) return res.status(401).json({ error: 'Sign in required to place a call.' });
+
+  // Domestic = both legs in the US/Canada NANP (+1); International = either leg
+  // outside it (UK/Germany/France/Japan -- the rest of V1 scope). Matches the cost
+  // model's own "both legs domestic" vs "worst-case route" assumption.
+  const route = (isNanpNumber(partyA) && isNanpNumber(partyB)) ? 'domestic' : 'international';
+  const capSec = route === 'domestic' ? PHONE_DOMESTIC_CAP_SEC : PHONE_INTL_CAP_SEC;
+  const usageSec = await getMonthlyPhoneUsageSec(uid, route);
+  if (usageSec >= capSec) {
+    return res.status(429).json({ error: `Monthly ${route} phone limit reached (${Math.round(capSec / 60)} min). Resets at the start of next month. (Option to purchase more credits coming soon.)` });
+  }
+
   const room = `talkbridge-${Date.now()}`;
   const recordFlag = record ? '1' : '0';
   try {
@@ -262,15 +410,25 @@ app.post('/api/call/bridge', async (req, res) => {
       from: process.env.TWILIO_PHONE_NUMBER,
       url: `https://talk-bridge.org/api/call/stream-twiml?room=${encodeURIComponent(room)}&leg=A&lang=${encodeURIComponent(langA || 'en')}&record=${recordFlag}`,
       statusCallback: 'https://talk-bridge.org/api/call/status',
-      statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed']
+      statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'],
+      timeLimit: CALL_HARD_TIME_LIMIT_SEC
     });
     const callB = await twilioClient.calls.create({
       to: partyB,
       from: process.env.TWILIO_PHONE_NUMBER,
       url: `https://talk-bridge.org/api/call/stream-twiml?room=${encodeURIComponent(room)}&leg=B&lang=${encodeURIComponent(langB || 'es')}&record=${recordFlag}`,
       statusCallback: 'https://talk-bridge.org/api/call/status',
-      statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed']
+      statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'],
+      timeLimit: CALL_HARD_TIME_LIMIT_SEC
     });
+    // Tracked regardless of recording -- this is what lets /api/call/status attribute
+    // Twilio's own reported CallDuration back to the right user + route for the
+    // monthly cap. Only leg A's completion increments usage (both legs run
+    // concurrently, so counting both would double the minutes); leg B is tracked only
+    // so its entry gets cleaned up too. Unrelated to (and unchanged from) the
+    // recording no-answer cleanup below, which still keys off roomBySid.
+    callUsageMeta.set(callA.sid, { uid, route, leg: 'A' });
+    callUsageMeta.set(callB.sid, { uid, route, leg: 'B' });
     if (record) {
       roomBySid.set(callA.sid, room);
       roomBySid.set(callB.sid, room);
@@ -589,7 +747,7 @@ async function translateForCall(text, srcLang, tgtLang) {
       'anthropic-version': '2023-06-01'
     },
     body: JSON.stringify({
-      model: 'claude-sonnet-4-6',
+      model: 'claude-sonnet-5',
       max_tokens: 1024,
       system: systemPrompt,
       tools: [TRANSLATE_TOOL],
@@ -743,7 +901,50 @@ async function speakViaDeepgram(text, legInfo) {
   ttsWs.on('close', () => {});
 }
 
+// =====================================================================================
+// ElevenLabs shared monthly credit pool tracking -- Sept 8 2026. Auto Top Up is
+// confirmed OFF, so the real risk isn't overage cost, it's the pool silently pausing
+// mid-month (no more ElevenLabs-routed TTS for ANY user until next month) with no
+// warning. This is a single shared counter across every user (not a per-user cap),
+// sized from TalkBridge_Cost_Cap_Model.xlsx (ElevenLabs Pool sheet): 30,000
+// characters/month at 1 credit/char worst case, alert at 70% (21,000 chars). Only
+// speakViaElevenLabs() ever sends text to ElevenLabs -- Video Call captions are
+// text-only, no TTS -- so this one hook point covers all real usage.
+const ELEVENLABS_POOL_CHARS = 30000;
+const ELEVENLABS_ALERT_THRESHOLD = 0.7;
+let elevenLabsAlertFiredForMonth = null; // yyyy-mm once the alert has fired, so it only logs once per month
+
+async function incrementElevenLabsPoolUsage(chars) {
+  if (!chars || chars <= 0) return;
+  const key = currentMonthKey();
+  const url = `${FIREBASE_DB_URL}/usage/_aggregate/elevenlabs/${key}.json?auth=${FIREBASE_DB_SECRET}`;
+  try {
+    const res = await fetch(url, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chars: { '.sv': { increment: chars } } }),
+    });
+    const val = await res.json();
+    if (!res.ok || (val && val.error)) {
+      console.error('[elevenlabs-pool] increment failed:', res.status, JSON.stringify(val));
+      return;
+    }
+    const newTotal = typeof val?.chars === 'number' ? val.chars : null;
+    if (newTotal === null) return;
+    const thresholdChars = ELEVENLABS_POOL_CHARS * ELEVENLABS_ALERT_THRESHOLD;
+    if (newTotal >= ELEVENLABS_POOL_CHARS) {
+      console.error(`[elevenlabs-pool] POOL LIKELY EXHAUSTED: ${newTotal}/${ELEVENLABS_POOL_CHARS} characters used this month -- ElevenLabs TTS may already be failing for all users until next month.`);
+    } else if (newTotal >= thresholdChars && elevenLabsAlertFiredForMonth !== key) {
+      elevenLabsAlertFiredForMonth = key;
+      console.error(`[elevenlabs-pool] ALERT: ${newTotal}/${ELEVENLABS_POOL_CHARS} characters used this month (${Math.round((newTotal / ELEVENLABS_POOL_CHARS) * 100)}%) -- the shared ElevenLabs pool may pause before month-end (Auto Top Up is off). Check the ElevenLabs dashboard / consider upgrading the plan.`);
+    }
+  } catch (err) {
+    console.error('[elevenlabs-pool] increment failed:', err.message);
+  }
+}
+
 async function speakViaElevenLabs(text, legInfo) {
+  incrementElevenLabsPoolUsage(text.length); // fire-and-forget -- shared pool tracking, doesn't block the TTS call
   const startTime = Date.now();
   let firstChunkTime = null;
   let totalBytes = 0;
