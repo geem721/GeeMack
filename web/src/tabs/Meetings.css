@@ -1,0 +1,111 @@
+.mt-landing {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 4px;
+}
+.mt-toprow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.mt-title {
+  font-size: 18px;
+  font-weight: 600;
+}
+.mt-landing-body {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.mt-landing-card {
+  flex: 1;
+  min-width: 240px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.mt-landing-card-title {
+  font-weight: 600;
+  font-size: 15px;
+}
+.mt-input {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: transparent;
+  color: inherit;
+  font-size: 14px;
+}
+.mt-preview-card {
+  max-width: 420px;
+  margin: 40px auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 24px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  text-align: center;
+}
+.mt-preview-sub {
+  color: var(--muted);
+  font-size: 14px;
+  margin-bottom: 8px;
+}
+.mt-inroom {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+.mt-inroom .vc-grid {
+  flex: 1;
+}
+.mt-host-panel {
+  width: 220px;
+  flex-shrink: 0;
+  padding: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.mt-host-panel-title {
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: 8px;
+  color: var(--muted);
+}
+.mt-host-participant {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 0;
+  font-size: 13px;
+  border-bottom: 1px solid var(--border);
+}
+.mt-host-participant:last-child {
+  border-bottom: none;
+}
+.mt-host-remove {
+  padding: 2px 8px;
+  font-size: 12px;
+  flex: none;
+}
+.mt-pill-danger {
+  background: rgba(239, 68, 68, 0.12);
+  color: var(--danger);
+}
+@media (max-width: 700px) {
+  .mt-inroom {
+    flex-direction: column;
+  }
+  .mt-host-panel {
+    width: 100%;
+  }
+}

@@ -22,6 +22,7 @@ import { ROOMS } from "./rooms.js";
 // dependencies shouldn't tax every visitor.
 const GroupChat = lazy(() => import("./tabs/GroupChat.jsx"));
 const VideoCall = lazy(() => import("./tabs/VideoCall.jsx"));
+const Meetings = lazy(() => import("./tabs/Meetings.jsx"));
 
 // Nav shell — Phase 0 of MIGRATION_PLAN.md. Video Call is its own top-level tab
 // (not nested inside Group Chat) per the 2026-08-16 decision.
@@ -31,6 +32,7 @@ const TABS = [
   { key: "documents", label: "Documents", icon: "📄", Component: Documents },
   { key: "groupchat", label: "Group Chat", icon: "💬", Component: GroupChat },
   { key: "videocall", label: "Video Call", icon: "📹", Component: VideoCall },
+  { key: "meetings", label: "Meetings", icon: "🤝", Component: Meetings },
   { key: "phone", label: "Phone", icon: "📞", Component: Phone },
   { key: "history", label: "History", icon: "🕐", Component: History },
   { key: "settings", label: "Settings", icon: "⚙️", Component: Settings },
@@ -46,14 +48,21 @@ const TABS = [
 // requirement.
 function initialRouteFromUrl() {
   const params = new URLSearchParams(window.location.search);
+  // Meeting links (?tab=meetings&meeting=<id>) are a separate case from the room-based
+  // ones below — meeting IDs are dynamic (server-generated), not from the fixed ROOMS
+  // list, so they can't be validated against it the way room= is.
+  const meeting = params.get("meeting");
+  if (meeting && params.get("tab") === "meetings") {
+    return { tab: "meetings", room: null, meeting };
+  }
   const room = params.get("room");
-  if (!room || !ROOMS.includes(room)) return { tab: null, room: null };
+  if (!room || !ROOMS.includes(room)) return { tab: null, room: null, meeting: null };
   const tab = params.get("tab") === "videocall" ? "videocall" : "groupchat";
-  return { tab, room };
+  return { tab, room, meeting: null };
 }
 
 export default function App() {
-  const [{ tab: initialTab, room: initialRoom }] = useState(initialRouteFromUrl);
+  const [{ tab: initialTab, room: initialRoom, meeting: initialMeetingId }] = useState(initialRouteFromUrl);
   const [activeTab, setActiveTab] = useState(initialTab ?? "translate");
   const active = TABS.find((t) => t.key === activeTab) ?? TABS[0];
   const ActiveComponent = active.Component;
@@ -91,6 +100,8 @@ export default function App() {
               <Suspense fallback={<div className="tab-loading">Loading…</div>}>
                 {active.key === "groupchat" || active.key === "videocall" ? (
                   <ActiveComponent initialRoom={initialRoom} />
+                ) : active.key === "meetings" ? (
+                  <ActiveComponent initialMeetingId={initialMeetingId} />
                 ) : (
                   <ActiveComponent />
                 )}
