@@ -8,7 +8,7 @@ import http from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import deepgramSdk from '@deepgram/sdk';
 const { createClient, LiveTranscriptionEvents } = deepgramSdk;
-import { AccessToken } from 'livekit-server-sdk';
+import { AccessToken, RoomServiceClient } from 'livekit-server-sdk';
 import twilio from 'twilio';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 
@@ -310,6 +310,159 @@ app.post('/api/livekit-token', async (req, res) => {
     return res.json({ token, url: process.env.LIVEKIT_URL });
   } catch (err) {
     console.error('LiveKit token error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// --- Meetings (business video meetings, multi-party) ---
+// Separate from the casual named-room Video Call (`ROOMS`, shared with Group Chat).
+// A meeting is a private, host-created room with its own short shareable ID, stored in
+// Firebase RTDB the same way usage/translate-cap data is (REST + secret, no Admin SDK --
+// same reasoning as verifyFirebaseToken above). The LiveKit room name IS the meeting ID,
+// so no separate mapping is needed. Every participant must be a signed-in TalkBridge
+// user (Greg's call, Sept 14 -- consistent with every other feature requiring login and
+// with usage caps being per-account); there is no guest-join path.
+const roomService = new RoomServiceClient(
+  process.env.LIVEKIT_URL.replace('wss://', 'https://'),
+  process.env.LIVEKIT_API_KEY,
+  process.env.LIVEKIT_API_SECRET
+);
+// Google Meet-style short code: lowercase letters only, no ambiguous i/l/o, grouped
+// 3-4-3 for easy reading aloud in a business context (e.g. "xtb-fmqr-jkd").
+const MEETING_ID_ALPHABET = 'abcdefghjkmnpqrstuvwxyz';
+function generateMeetingId() {
+  const part = (n) => Array.from({ length: n }, () =>
+    MEETING_ID_ALPHABET[Math.floor(Math.random() * MEETING_ID_ALPHABET.length)]
+  ).join('');
+  return `${part(3)}-${part(4)}-${part(3)}`;
+}
+async function getMeeting(meetingId) {
+  const url = `${FIREBASE_DB_URL}/meetings/${meetingId}.json?auth=${FIREBASE_DB_SECRET}`;
+  const res = await fetch(url);
+  const val = await res.json();
+  if (!res.ok || (val && typeof val === 'object' && val.error)) {
+    console.error('[meetings] read failed:', res.status, JSON.stringify(val));
+    return null;
+  }
+  return val; // null if the meetingId doesn't exist
+}
+async function writeMeeting(meetingId, data) {
+  const url = `${FIREBASE_DB_URL}/meetings/${meetingId}.json?auth=${FIREBASE_DB_SECRET}`;
+  const res = await fetch(url, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  const val = await res.json();
+  if (!res.ok || (val && typeof val === 'object' && val.error)) {
+    console.error('[meetings] write failed:', res.status, JSON.stringify(val));
+    throw new Error('Failed to save meeting');
+  }
+}
+async function patchMeeting(meetingId, patch) {
+  const url = `${FIREBASE_DB_URL}/meetings/${meetingId}.json?auth=${FIREBASE_DB_SECRET}`;
+  const res = await fetch(url, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  });
+  const val = await res.json();
+  if (!res.ok || (val && typeof val === 'object' && val.error)) {
+    console.error('[meetings] patch failed:', res.status, JSON.stringify(val));
+    throw new Error('Failed to update meeting');
+  }
+}
+
+app.post('/api/meetings/create', async (req, res) => {
+  const uid = await verifyFirebaseToken(req);
+  if (!uid) return res.status(401).json({ error: 'Sign in required to create a meeting.' });
+  const { title, hostName } = req.body || {};
+  const meetingId = generateMeetingId();
+  try {
+    await writeMeeting(meetingId, {
+      hostUid: uid,
+      hostName: hostName || uid,
+      title: title || 'TalkBridge Meeting',
+      createdAt: Date.now(),
+      status: 'active',
+    });
+    return res.json({
+      meetingId,
+      joinLink: `https://${req.get('host')}/?tab=meetings&meeting=${meetingId}`,
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/meetings/:id', async (req, res) => {
+  const uid = await verifyFirebaseToken(req);
+  if (!uid) return res.status(401).json({ error: 'Sign in required.' });
+  const meeting = await getMeeting(req.params.id);
+  if (!meeting) return res.status(404).json({ error: 'Meeting not found.' });
+  if (meeting.status === 'ended') return res.status(410).json({ error: 'This meeting has ended.' });
+  return res.json({ title: meeting.title, hostName: meeting.hostName, isHost: meeting.hostUid === uid });
+});
+
+app.post('/api/meetings/:id/token', async (req, res) => {
+  const uid = await verifyFirebaseToken(req);
+  if (!uid) return res.status(401).json({ error: 'Sign in required.' });
+  const { participantName } = req.body || {};
+  if (!participantName) return res.status(400).json({ error: 'participantName is required' });
+  const meetingId = req.params.id;
+  const meeting = await getMeeting(meetingId);
+  if (!meeting) return res.status(404).json({ error: 'Meeting not found.' });
+  if (meeting.status === 'ended') return res.status(410).json({ error: 'This meeting has ended.' });
+  const videoUsageSec = await getMonthlyVideoUsageSec(uid);
+  if (videoUsageSec >= VIDEO_MONTHLY_CAP_SEC) {
+    return res.status(429).json({ error: `Monthly video call limit reached (${Math.round(VIDEO_MONTHLY_CAP_SEC / 60)} min). Resets at the start of next month. (Option to purchase more credits coming soon.)` });
+  }
+  try {
+    const at = new AccessToken(
+      process.env.LIVEKIT_API_KEY,
+      process.env.LIVEKIT_API_SECRET,
+      { identity: participantName }
+    );
+    at.addGrant({ roomJoin: true, room: meetingId, canPublish: true, canSubscribe: true });
+    const token = await at.toJwt();
+    return res.json({ token, url: process.env.LIVEKIT_URL, isHost: meeting.hostUid === uid });
+  } catch (err) {
+    console.error('Meeting token error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/meetings/:id/kick', async (req, res) => {
+  const uid = await verifyFirebaseToken(req);
+  if (!uid) return res.status(401).json({ error: 'Sign in required.' });
+  const { participantIdentity } = req.body || {};
+  if (!participantIdentity) return res.status(400).json({ error: 'participantIdentity is required' });
+  const meetingId = req.params.id;
+  const meeting = await getMeeting(meetingId);
+  if (!meeting) return res.status(404).json({ error: 'Meeting not found.' });
+  if (meeting.hostUid !== uid) return res.status(403).json({ error: 'Only the host can remove participants.' });
+  try {
+    await roomService.removeParticipant(meetingId, participantIdentity);
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('Meeting kick error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/meetings/:id/end', async (req, res) => {
+  const uid = await verifyFirebaseToken(req);
+  if (!uid) return res.status(401).json({ error: 'Sign in required.' });
+  const meetingId = req.params.id;
+  const meeting = await getMeeting(meetingId);
+  if (!meeting) return res.status(404).json({ error: 'Meeting not found.' });
+  if (meeting.hostUid !== uid) return res.status(403).json({ error: 'Only the host can end the meeting.' });
+  try {
+    await roomService.deleteRoom(meetingId).catch(() => {});
+    await patchMeeting(meetingId, { status: 'ended', endedAt: Date.now() });
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('Meeting end error:', err);
     return res.status(500).json({ error: err.message });
   }
 });
