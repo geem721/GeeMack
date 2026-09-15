@@ -109,3 +109,17 @@
     width: 100%;
   }
 }
+
+/* Screen share tile (Sept 14) — breaks out of the fixed 320px camera-tile size to
+   read as the featured content: full width, its own row, pushed to the front of
+   the grid regardless of when it was attached. */
+.vc-tile-screen {
+  flex-basis: 100%;
+  max-width: 100%;
+  order: -1;
+}
+.vc-tile-screen .vc-tile-video {
+  height: 360px;
+  object-fit: contain;
+  background: #000;
+}

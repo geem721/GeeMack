@@ -376,19 +376,24 @@ async function patchMeeting(meetingId, patch) {
 app.post('/api/meetings/create', async (req, res) => {
   const uid = await verifyFirebaseToken(req);
   if (!uid) return res.status(401).json({ error: 'Sign in required to create a meeting.' });
-  const { title, hostName } = req.body || {};
+  const { title, hostName, scheduledFor } = req.body || {};
   const meetingId = generateMeetingId();
   try {
-    await writeMeeting(meetingId, {
+    const meetingData = {
       hostUid: uid,
       hostName: hostName || uid,
       title: title || 'TalkBridge Meeting',
       createdAt: Date.now(),
       status: 'active',
-    });
+    };
+    if (scheduledFor && Number.isFinite(scheduledFor) && scheduledFor > Date.now()) {
+      meetingData.scheduledFor = scheduledFor;
+    }
+    await writeMeeting(meetingId, meetingData);
     return res.json({
       meetingId,
       joinLink: `https://${req.get('host')}/?tab=meetings&meeting=${meetingId}`,
+      scheduledFor: meetingData.scheduledFor || null,
     });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -401,7 +406,7 @@ app.get('/api/meetings/:id', async (req, res) => {
   const meeting = await getMeeting(req.params.id);
   if (!meeting) return res.status(404).json({ error: 'Meeting not found.' });
   if (meeting.status === 'ended') return res.status(410).json({ error: 'This meeting has ended.' });
-  return res.json({ title: meeting.title, hostName: meeting.hostName, isHost: meeting.hostUid === uid });
+  return res.json({ title: meeting.title, hostName: meeting.hostName, isHost: meeting.hostUid === uid, scheduledFor: meeting.scheduledFor || null });
 });
 
 app.post('/api/meetings/:id/token', async (req, res) => {
@@ -446,6 +451,32 @@ app.post('/api/meetings/:id/kick', async (req, res) => {
     return res.json({ ok: true });
   } catch (err) {
     console.error('Meeting kick error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/meetings/:id/mute', async (req, res) => {
+  const uid = await verifyFirebaseToken(req);
+  if (!uid) return res.status(401).json({ error: 'Sign in required.' });
+  const { participantIdentity, muted } = req.body || {};
+  if (!participantIdentity) return res.status(400).json({ error: 'participantIdentity is required' });
+  const meetingId = req.params.id;
+  const meeting = await getMeeting(meetingId);
+  if (!meeting) return res.status(404).json({ error: 'Meeting not found.' });
+  if (meeting.hostUid !== uid) return res.status(403).json({ error: 'Only the host can mute participants.' });
+  try {
+    const participant = await roomService.getParticipant(meetingId, participantIdentity);
+    // TrackType comes back as a numeric protobuf enum in some SDK versions and a string
+    // in others -- check both rather than importing the enum and risking a bad import.
+    const audioTrack = (participant.tracks || []).find(
+      (t) => t.type === 0 || String(t.type).toUpperCase() === 'AUDIO'
+    );
+    if (!audioTrack) return res.status(404).json({ error: 'That participant has no microphone track to mute.' });
+    const shouldMute = muted !== false;
+    await roomService.mutePublishedTrack(meetingId, participantIdentity, audioTrack.sid, shouldMute);
+    return res.json({ ok: true, muted: shouldMute });
+  } catch (err) {
+    console.error('Meeting mute error:', err);
     return res.status(500).json({ error: err.message });
   }
 });

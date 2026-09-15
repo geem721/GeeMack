@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Room, RoomEvent, createLocalVideoTrack, createLocalAudioTrack } from "livekit-client";
+import { Room, RoomEvent, Track, createLocalVideoTrack, createLocalAudioTrack, createLocalScreenTracks } from "livekit-client";
 import { ref, onValue, off, set, serverTimestamp } from "firebase/database";
 import { auth, db } from "../firebase.js";
 import { callTranslate } from "../api/translate.js";
@@ -52,6 +52,8 @@ function MeetingsPanel({ user, onSignOut, initialMeetingId }) {
   const [speakLang, setSpeakLang] = useState("en");
   const [showLang, setShowLang] = useState("en");
   const [inviteOpen, setInviteOpen] = useState(false);
+  const [scheduleInput, setScheduleInput] = useState("");
+  const [scheduledInfo, setScheduledInfo] = useState(null);
   const [isHost, setIsHost] = useState(false);
   const [participants, setParticipants] = useState([]); // remote participant identities, for host controls
   const [recordingBanner, setRecordingBanner] = useState(null);
@@ -59,9 +61,12 @@ function MeetingsPanel({ user, onSignOut, initialMeetingId }) {
   const [recordingBusy, setRecordingBusy] = useState(false);
   const [lastRecordingMeeting, setLastRecordingMeeting] = useState(null);
   const [endBusy, setEndBusy] = useState(false);
+  const [isScreenSharing, setIsScreenSharing] = useState(false);
+  const [mutedMap, setMutedMap] = useState({}); // identity -> host-muted boolean, host panel only
 
   const gridRef = useRef(null);
   const livekitRoomRef = useRef(null);
+  const screenTrackRef = useRef(null);
   const videoHeartbeatRef = useRef(null);
   const captionWsRef = useRef(null);
   const captionRecorderRef = useRef(null);
@@ -120,13 +125,13 @@ function MeetingsPanel({ user, onSignOut, initialMeetingId }) {
   }, [callActive, meetingId]);
 
   // ---- Track/tile/caption handling — copy-adapted from VideoCall.jsx verbatim ----
-  function attachTrack(track, identity, isLocal) {
+  function attachTrack(track, identity, isLocal, isScreen = false) {
     const grid = gridRef.current;
     if (!grid) return;
     let wrapper = grid.querySelector(`[data-identity="${CSS.escape(identity)}"]`);
     if (!wrapper) {
       wrapper = document.createElement("div");
-      wrapper.className = "vc-tile";
+      wrapper.className = "vc-tile" + (isScreen ? " vc-tile-screen" : "");
       wrapper.dataset.identity = identity;
       const label = document.createElement("div");
       label.className = "vc-tile-label";
@@ -387,22 +392,43 @@ function MeetingsPanel({ user, onSignOut, initialMeetingId }) {
   // ---- Meetings-specific: create / preview / join / host controls ----
   async function createMeeting() {
     setStage("creating");
+    const scheduledForMs = scheduleInput ? new Date(scheduleInput).getTime() : null;
+    if (scheduledForMs && scheduledForMs <= Date.now()) {
+      showToast("Pick a time in the future to schedule a meeting", 3000);
+      setStage("landing");
+      return;
+    }
     try {
       const idToken = await auth.currentUser.getIdToken();
       const res = await fetch("/api/meetings/create", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
-        body: JSON.stringify({ title: titleInput.trim() || undefined, hostName: user.email }),
+        body: JSON.stringify({ title: titleInput.trim() || undefined, hostName: user.email, scheduledFor: scheduledForMs || undefined }),
       });
       const data = await res.json();
       if (data.error || !data.meetingId) throw new Error(data.error || "Could not create meeting");
       setMeetingId(data.meetingId);
       setIsHost(true);
+      if (scheduledForMs) {
+        setScheduledInfo({ scheduledFor: scheduledForMs });
+        setStage("scheduled");
+        return;
+      }
       await joinCall(data.meetingId, true);
       setInviteOpen(true); // host lands straight in the call with the invite box open, ready to share
     } catch (e) {
       showToast("Could not create meeting: " + e.message, 3000);
       setStage("landing");
+    }
+  }
+  async function startScheduledMeetingNow() {
+    setStage("creating");
+    try {
+      await joinCall(meetingId, true);
+      setInviteOpen(true);
+    } catch (e) {
+      showToast("Could not start meeting: " + e.message, 3000);
+      setStage("scheduled");
     }
   }
   async function previewMeeting(id) {
@@ -446,24 +472,46 @@ function MeetingsPanel({ user, onSignOut, initialMeetingId }) {
       setIsHost(!!serverIsHost || !!hostFlag);
       const livekitRoom = new Room({ adaptiveStream: true, dynacast: true });
       livekitRoomRef.current = livekitRoom;
-      livekitRoom.on(RoomEvent.TrackSubscribed, (track, _pub, participant) => {
-        attachTrack(track, participant.identity, false);
+      livekitRoom.on(RoomEvent.TrackSubscribed, (track, pub, participant) => {
+        const isScreen = pub.source === Track.Source.ScreenShare;
+        attachTrack(track, isScreen ? `${participant.identity} (screen share)` : participant.identity, false, isScreen);
       });
-      livekitRoom.on(RoomEvent.TrackUnsubscribed, (_track, _pub, participant) => {
-        removeTile(participant.identity);
+      livekitRoom.on(RoomEvent.TrackUnsubscribed, (_track, pub, participant) => {
+        const isScreen = pub.source === Track.Source.ScreenShare;
+        removeTile(isScreen ? `${participant.identity} (screen share)` : participant.identity);
+      });
+      livekitRoom.on(RoomEvent.TrackMuted, (pub, participant) => {
+        if (pub.source === Track.Source.Microphone) {
+          setMutedMap((prev) => ({ ...prev, [participant.identity]: true }));
+        }
+      });
+      livekitRoom.on(RoomEvent.TrackUnmuted, (pub, participant) => {
+        if (pub.source === Track.Source.Microphone) {
+          setMutedMap((prev) => ({ ...prev, [participant.identity]: false }));
+        }
       });
       livekitRoom.on(RoomEvent.ParticipantConnected, (participant) => {
         setParticipants((prev) => [...prev.filter((p) => p !== participant.identity), participant.identity]);
       });
       livekitRoom.on(RoomEvent.ParticipantDisconnected, (participant) => {
         removeTile(participant.identity);
+        removeTile(`${participant.identity} (screen share)`);
         setParticipants((prev) => prev.filter((p) => p !== participant.identity));
+        setMutedMap((prev) => {
+          const next = { ...prev };
+          delete next[participant.identity];
+          return next;
+        });
       });
       livekitRoom.on(RoomEvent.Disconnected, () => {
         if (!selfInitiatedDisconnectRef.current) {
           showToast("This meeting has ended", 4000);
         }
         selfInitiatedDisconnectRef.current = false;
+        if (screenTrackRef.current) {
+          screenTrackRef.current = null;
+          setIsScreenSharing(false);
+        }
         resetToLanding();
       });
       await livekitRoom.connect(url, token);
@@ -514,6 +562,7 @@ function MeetingsPanel({ user, onSignOut, initialMeetingId }) {
       videoHeartbeatRef.current = null;
     }
     if (isRecordingMineRef.current) await stopRecording();
+    if (screenTrackRef.current) await stopScreenShare();
     selfInitiatedDisconnectRef.current = true;
     if (livekitRoomRef.current) {
       await livekitRoomRef.current.disconnect().catch(() => {});
@@ -524,6 +573,45 @@ function MeetingsPanel({ user, onSignOut, initialMeetingId }) {
     if (gridRef.current) gridRef.current.innerHTML = "";
     setCallActive(false);
   }
+
+  // ---- Screen share (Sept 14) ----
+  async function startScreenShare() {
+    if (isScreenSharing || !livekitRoomRef.current) return;
+    try {
+      const tracks = await createLocalScreenTracks({ audio: false });
+      const screenTrack = tracks.find((t) => t.kind === "video");
+      if (!screenTrack) throw new Error("No screen track captured");
+      screenTrackRef.current = screenTrack;
+      await livekitRoomRef.current.localParticipant.publishTrack(screenTrack, {
+        source: Track.Source.ScreenShare,
+      });
+      attachTrack(screenTrack, "Your screen", true, true);
+      setIsScreenSharing(true);
+      const raw = screenTrack.mediaStreamTrack;
+      if (raw) raw.addEventListener("ended", stopScreenShare, { once: true });
+    } catch (e) {
+      if (e?.name !== "NotAllowedError") {
+        showToast("Could not start screen share: " + e.message, 3000);
+      }
+    }
+  }
+  async function stopScreenShare() {
+    if (!screenTrackRef.current) return;
+    const track = screenTrackRef.current;
+    screenTrackRef.current = null;
+    try {
+      if (livekitRoomRef.current) {
+        await livekitRoomRef.current.localParticipant.unpublishTrack(track, true);
+      }
+    } catch (e) {
+      console.error("[screen share] unpublish failed:", e);
+    } finally {
+      try { track.stop(); } catch { /* already stopped */ }
+    }
+    removeTile("Your screen");
+    setIsScreenSharing(false);
+  }
+
   function resetToLanding() {
     setStage("landing");
     setMeetingId("");
@@ -532,6 +620,9 @@ function MeetingsPanel({ user, onSignOut, initialMeetingId }) {
     setTitleInput("");
     setIsHost(false);
     setParticipants([]);
+    setMutedMap({});
+    setScheduleInput("");
+    setScheduledInfo(null);
   }
   async function endMeetingForEveryone() {
     if (!isHost || endBusy) return;
@@ -567,6 +658,22 @@ function MeetingsPanel({ user, onSignOut, initialMeetingId }) {
       showToast("Could not remove participant: " + e.message, 3000);
     }
   }
+  async function toggleMuteParticipant(identity) {
+    const nextMuted = !mutedMap[identity];
+    try {
+      const idToken = await auth.currentUser.getIdToken();
+      const res = await fetch(`/api/meetings/${meetingId}/mute`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
+        body: JSON.stringify({ participantIdentity: identity, muted: nextMuted }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Could not update mute state");
+      setMutedMap((prev) => ({ ...prev, [identity]: data.muted }));
+    } catch (e) {
+      showToast("Could not mute/unmute: " + e.message, 3000);
+    }
+  }
   function inviteLink() {
     return `${window.location.origin}${window.location.pathname}?tab=meetings&meeting=${meetingId}`;
   }
@@ -575,9 +682,17 @@ function MeetingsPanel({ user, onSignOut, initialMeetingId }) {
   }
 
   // ---- Render ----
-  if (stage === "landing" || stage === "creating") {
-    return (
-      <div className="mt-landing">
+  // Sept 14 fix: this used to render via three separate conditional `return`
+  // blocks keyed on `stage`. That meant the in-call block's .vc-grid div did
+  // not exist in the DOM yet when joinCall() attached the local video/audio
+  // track to gridRef (that attach runs before setStage("in-call") commits),
+  // so the attach silently no-op'd and nobody ever saw their own camera
+  // preview. Fix: always mount all three stage wrappers and toggle which one
+  // is visible with CSS display:none — the same pattern VideoCall.jsx uses
+  // for this exact reason.
+  return (
+    <>
+      <div className="mt-landing" style={(stage === "landing" || stage === "creating") ? undefined : { display: "none" }}>
         <div className="mt-toprow">
           <span className="mt-title">🤝 Meetings</span>
           <div className="gc-account">
@@ -595,8 +710,16 @@ function MeetingsPanel({ user, onSignOut, initialMeetingId }) {
               onChange={(e) => setTitleInput(e.target.value)}
               disabled={stage === "creating"}
             />
+            <input
+              type="datetime-local"
+              className="mt-input"
+              value={scheduleInput}
+              onChange={(e) => setScheduleInput(e.target.value)}
+              disabled={stage === "creating"}
+              title="Optional: schedule this meeting for later instead of starting now"
+            />
             <button className="btn btn-primary" onClick={createMeeting} disabled={stage === "creating"}>
-              {stage === "creating" ? <span className="spinner" /> : "📹 New Meeting"}
+              {stage === "creating" ? <span className="spinner" /> : scheduleInput ? "🗓️ Schedule Meeting" : "📹 New Meeting"}
             </button>
           </div>
           <div className="mt-landing-card">
@@ -614,12 +737,23 @@ function MeetingsPanel({ user, onSignOut, initialMeetingId }) {
           </div>
         </div>
       </div>
-    );
-  }
 
-  if (stage === "preview") {
-    return (
-      <div className="mt-landing">
+      <div className="mt-landing" style={stage === "scheduled" ? undefined : { display: "none" }}>
+        <div className="mt-landing-card">
+          <div className="mt-landing-card-title">Meeting scheduled</div>
+          <div className="mt-preview-sub">
+            {scheduledInfo && `Starts ${new Date(scheduledInfo.scheduledFor).toLocaleString()}`}
+          </div>
+          <div className="gc-invite-row">
+            <input readOnly className="gc-invite-input" value={inviteLink()} />
+            <button className="btn btn-primary" style={{ flex: "none" }} onClick={copyInviteLink}>Copy</button>
+          </div>
+          <button className="btn btn-primary" onClick={startScheduledMeetingNow}>Start Meeting Now</button>
+          <button className="btn btn-secondary" onClick={resetToLanding}>Back to Meetings</button>
+        </div>
+      </div>
+
+      <div className="mt-landing" style={stage === "preview" ? undefined : { display: "none" }}>
         <div className="mt-preview-card">
           {previewBusy && <span className="spinner" />}
           {previewError && (
@@ -633,94 +767,114 @@ function MeetingsPanel({ user, onSignOut, initialMeetingId }) {
             <>
               <div className="mt-landing-card-title">{previewInfo.title}</div>
               <div className="mt-preview-sub">Hosted by {previewInfo.hostName}</div>
-              <button className="btn btn-primary" onClick={confirmJoin} disabled={connecting}>
-                {connecting ? <span className="spinner" /> : "Join Meeting"}
-              </button>
-              <button className="btn btn-secondary" onClick={resetToLanding} disabled={connecting}>Cancel</button>
+              {previewInfo.scheduledFor && !previewInfo.isHost && Date.now() < previewInfo.scheduledFor ? (
+                <>
+                  <div className="mt-preview-sub">
+                    This meeting hasn't started yet — it's scheduled for {new Date(previewInfo.scheduledFor).toLocaleString()}.
+                  </div>
+                  <button className="btn btn-primary" onClick={() => previewMeeting(meetingId)} disabled={previewBusy}>
+                    {previewBusy ? <span className="spinner" /> : "🔄 Check Again"}
+                  </button>
+                  <button className="btn btn-secondary" onClick={resetToLanding}>Leave</button>
+                </>
+              ) : (
+                <>
+                  <button className="btn btn-primary" onClick={confirmJoin} disabled={connecting}>
+                    {connecting ? <span className="spinner" /> : "Join Meeting"}
+                  </button>
+                  <button className="btn btn-secondary" onClick={resetToLanding} disabled={connecting}>Cancel</button>
+                </>
+              )}
             </>
           )}
         </div>
       </div>
-    );
-  }
 
-  // stage === "in-call"
-  return (
-    <div className="vc-tab">
-      <div className="vc-toprow">
-        <span className="mt-title">🤝 {meetingId}</span>
-        <div className="gc-account">
-          <span className="gc-account-email" title={user.email}>{user.email}</span>
-          <button className="gc-icon-btn" onClick={onSignOut}>Sign out</button>
+      <div className="vc-tab" style={stage === "in-call" ? undefined : { display: "none" }}>
+        <div className="vc-toprow">
+          <span className="mt-title">🤝 {meetingId}</span>
+          <div className="gc-account">
+            <span className="gc-account-email" title={user.email}>{user.email}</span>
+            <button className="gc-icon-btn" onClick={onSignOut}>Sign out</button>
+          </div>
         </div>
-      </div>
-      <div className="gc-actionrow">
-        <button
-          className={"gc-pill" + (isRecordingMine ? " gc-pill-accent" : "")}
-          onClick={isRecordingMine ? stopRecording : startRecording}
-          disabled={recordingBusy || (!!recordingBanner && !isRecordingMine)}
-        >
-          {recordingBusy ? "…" : isRecordingMine ? "⏹ Stop Recording" : recordingBanner ? "🔴 Recording in progress" : "🔴 Record"}
+        <div className="gc-actionrow">
+          <button
+            className={"gc-pill" + (isRecordingMine ? " gc-pill-accent" : "")}
+            onClick={isRecordingMine ? stopRecording : startRecording}
+            disabled={recordingBusy || (!!recordingBanner && !isRecordingMine)}
+          >
+            {recordingBusy ? "…" : isRecordingMine ? "⏹ Stop Recording" : recordingBanner ? "🔴 Recording in progress" : "🔴 Record"}
+          </button>
+          <button className="gc-pill gc-pill-accent" onClick={() => setInviteOpen(true)}>✉️ Invite</button>
+          <button
+            className={"gc-pill" + (isScreenSharing ? " gc-pill-accent" : "")}
+            onClick={isScreenSharing ? stopScreenShare : startScreenShare}
+          >
+            {isScreenSharing ? "🛑 Stop Sharing" : "🖥️ Share Screen"}
+          </button>
+          {isHost && (
+            <button className="gc-pill mt-pill-danger" onClick={endMeetingForEveryone} disabled={endBusy}>
+              {endBusy ? "…" : "⛔ End Meeting for Everyone"}
+            </button>
+          )}
+        </div>
+        {recordingBanner && (
+          <div className="vc-recording-banner">🔴 This meeting is being recorded by {recordingBanner.startedBy}</div>
+        )}
+        <div className="lang-bar gc-lang-bar">
+          <select className="lang-sel" value={speakLang} onChange={(e) => onSpeakLangChange(e.target.value)}>
+            {LANGUAGES.map((l) => <option key={l.code} value={l.code}>{l.flag} {l.label}</option>)}
+          </select>
+          <span className="gc-lang-caption">I speak</span>
+          <select className="lang-sel" value={showLang} onChange={(e) => setShowLang(e.target.value)}>
+            {LANGUAGES.map((l) => <option key={l.code} value={l.code}>{l.flag} {l.label}</option>)}
+          </select>
+          <span className="gc-lang-caption">captions in</span>
+        </div>
+        <button className="btn btn-danger vc-call-btn" onClick={async () => { await leaveCall(); resetToLanding(); }}>
+          🔴 Leave Meeting
         </button>
-        <button className="gc-pill gc-pill-accent" onClick={() => setInviteOpen(true)}>✉️ Invite</button>
-        {isHost && (
-          <button className="gc-pill mt-pill-danger" onClick={endMeetingForEveryone} disabled={endBusy}>
-            {endBusy ? "…" : "⛔ End Meeting for Everyone"}
+        <div className="mt-inroom">
+          <div className="vc-grid" ref={gridRef} style={{ display: "flex" }} />
+          {isHost && participants.length > 0 && (
+            <div className="mt-host-panel">
+              <div className="mt-host-panel-title">Participants ({participants.length})</div>
+              {participants.map((identity) => (
+                <div className="mt-host-participant" key={identity}>
+                  <span>{mutedMap[identity] ? "🔇 " : ""}{identity}</span>
+                  <button className="btn btn-secondary mt-host-remove" onClick={() => toggleMuteParticipant(identity)}>
+                    {mutedMap[identity] ? "Unmute" : "Mute"}
+                  </button>
+                  <button className="btn btn-secondary mt-host-remove" onClick={() => kickParticipant(identity)}>
+                    Remove
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        {lastRecordingMeeting === meetingId && (
+          <button className="btn btn-secondary" onClick={() => { window.location.href = `/api/videocall/recording/${meetingId}`; }}>
+            🎬 Download last recording
           </button>
         )}
-      </div>
-      {recordingBanner && (
-        <div className="vc-recording-banner">🔴 This meeting is being recorded by {recordingBanner.startedBy}</div>
-      )}
-      <div className="lang-bar gc-lang-bar">
-        <select className="lang-sel" value={speakLang} onChange={(e) => onSpeakLangChange(e.target.value)}>
-          {LANGUAGES.map((l) => <option key={l.code} value={l.code}>{l.flag} {l.label}</option>)}
-        </select>
-        <span className="gc-lang-caption">I speak</span>
-        <select className="lang-sel" value={showLang} onChange={(e) => setShowLang(e.target.value)}>
-          {LANGUAGES.map((l) => <option key={l.code} value={l.code}>{l.flag} {l.label}</option>)}
-        </select>
-        <span className="gc-lang-caption">captions in</span>
-      </div>
-      <button className="btn btn-danger vc-call-btn" onClick={async () => { await leaveCall(); resetToLanding(); }}>
-        🔴 Leave Meeting
-      </button>
-      <div className="mt-inroom">
-        <div className="vc-grid" ref={gridRef} style={{ display: "flex" }} />
-        {isHost && participants.length > 0 && (
-          <div className="mt-host-panel">
-            <div className="mt-host-panel-title">Participants ({participants.length})</div>
-            {participants.map((identity) => (
-              <div className="mt-host-participant" key={identity}>
-                <span>{identity}</span>
-                <button className="btn btn-secondary mt-host-remove" onClick={() => kickParticipant(identity)}>
-                  Remove
-                </button>
+        {inviteOpen && (
+          <div className="gc-invite-backdrop" onClick={(e) => e.target === e.currentTarget && setInviteOpen(false)}>
+            <div className="gc-invite-box">
+              <div className="gc-invite-title">Invite to this meeting</div>
+              <div className="gc-invite-sub">Share this link — anyone with a TalkBridge account can join</div>
+              <div className="gc-invite-row">
+                <input readOnly className="gc-invite-input" value={inviteLink()} />
+                <button className="btn btn-primary" style={{ flex: "none" }} onClick={copyInviteLink}>Copy</button>
               </div>
-            ))}
+              <button className="btn btn-secondary" style={{ width: "100%", marginTop: 14 }} onClick={() => setInviteOpen(false)}>
+                Close
+              </button>
+            </div>
           </div>
         )}
       </div>
-      {lastRecordingMeeting === meetingId && (
-        <button className="btn btn-secondary" onClick={() => { window.location.href = `/api/videocall/recording/${meetingId}`; }}>
-          🎬 Download last recording
-        </button>
-      )}
-      {inviteOpen && (
-        <div className="gc-invite-backdrop" onClick={(e) => e.target === e.currentTarget && setInviteOpen(false)}>
-          <div className="gc-invite-box">
-            <div className="gc-invite-title">Invite to this meeting</div>
-            <div className="gc-invite-sub">Share this link — anyone with a TalkBridge account can join</div>
-            <div className="gc-invite-row">
-              <input readOnly className="gc-invite-input" value={inviteLink()} />
-              <button className="btn btn-primary" style={{ flex: "none" }} onClick={copyInviteLink}>Copy</button>
-            </div>
-            <button className="btn btn-secondary" style={{ width: "100%", marginTop: 14 }} onClick={() => setInviteOpen(false)}>
-              Close
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
+    </>
   );
 }
