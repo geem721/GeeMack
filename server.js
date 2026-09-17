@@ -564,7 +564,76 @@ app.post('/api/call/status', (req, res) => {
       }
     }
   }
+  if ((status === 'completed' || FAILED_CALL_STATUSES.has(status)) && callPairBySid.has(sid)) {
+    callPairBySid.delete(sid);
+  }
   res.sendStatus(200);
+});
+
+// --- Shared hangup helper for both the Twilio-AMD path and the transcript-based
+// fallback below. Looks the callSid up in callPairBySid and, if still tracked (not
+// already ended/cleaned up), ends both legs of the room via the Twilio REST API.
+async function hangUpCallPair(sid, reasonLabel) {
+  const pair = callPairBySid.get(sid);
+  if (!pair) return false;
+  console.log(`[amd] ${reasonLabel} on room=${pair.room} leg=${pair.leg} -- hanging up both legs`);
+  callPairBySid.delete(sid);
+  callPairBySid.delete(pair.otherSid);
+  try {
+    await twilioClient.calls(sid).update({ status: 'completed' });
+  } catch (err) {
+    console.error(`[amd] failed to hang up ${sid}:`, err.message);
+  }
+  try {
+    await twilioClient.calls(pair.otherSid).update({ status: 'completed' });
+  } catch (err) {
+    console.error(`[amd] failed to hang up ${pair.otherSid}:`, err.message);
+  }
+  return true;
+}
+
+// --- Transcript-based voicemail/IVR fallback. Twilio's audio-level machineDetection
+// (below) doesn't catch everything -- confirmed live on 2026-09-17: a carrier "mailbox
+// is full, press 5 for an SMS notification" announcement was reported AnsweredBy=human
+// by Twilio and the pipeline kept transcribing/translating it. This is a second,
+// content-based layer: any utterance whose TEXT matches common voicemail/IVR phrasing
+// triggers the same hangUpCallPair() path, independent of what Twilio's AMD decided.
+// Deliberately conservative phrasing (whole phrases, not single words) to minimize the
+// chance of a real conversation tripping it.
+const VOICEMAIL_PATTERNS = [
+  /at the tone/i,
+  /record(ing)? your message/i,
+  /leave (a|your) message/i,
+  /mail\s?box/i,
+  /voice\s?mail/i,
+  /press (the )?pound/i,
+  /press (one|two|three|four|five|six|seven|eight|nine|\d+) (to|for)/i,
+  /sms notification/i,
+  /can'?t take your call/i,
+  /not available (right now|at this time)/i,
+  /after the (beep|tone)/i,
+  /to review.{0,20}re[- ]?record/i
+];
+function isLikelyVoicemailText(text) {
+  return VOICEMAIL_PATTERNS.some((re) => re.test(text));
+}
+
+// --- Answering Machine Detection callback (async, from machineDetection+asyncAmd on
+// the /api/call/bridge legs). Twilio posts here once it's determined whether a human
+// or a machine (voicemail/IVR) picked up, without blocking the TwiML/stream connect --
+// so real human-to-human calls start exactly as before, and this only acts when it
+// detects a non-human pickup. AnsweredBy values: human, machine_start,
+// machine_end_beep, machine_end_silence, machine_end_other, fax, unknown. Anything
+// other than 'human' or 'unknown' hangs up BOTH legs of the room immediately -- this is
+// the first layer; the transcript-based fallback above is the second, for cases this
+// misses.
+app.post('/api/call/amd-callback', async (req, res) => {
+  const sid = req.body?.CallSid;
+  const answeredBy = req.body?.AnsweredBy;
+  console.log(`[amd] CallSid=${sid} AnsweredBy=${answeredBy}`);
+  res.sendStatus(200);
+  if (!answeredBy || answeredBy === 'human' || answeredBy === 'unknown') return;
+  await hangUpCallPair(sid, `non-human pickup detected (${answeredBy})`);
 });
 
 // --- Two-leg conference bridge (live interpreted call) ---
@@ -595,7 +664,11 @@ app.post('/api/call/bridge', async (req, res) => {
       url: `https://talk-bridge.org/api/call/stream-twiml?room=${encodeURIComponent(room)}&leg=A&lang=${encodeURIComponent(langA || 'en')}&record=${recordFlag}`,
       statusCallback: 'https://talk-bridge.org/api/call/status',
       statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'],
-      timeLimit: CALL_HARD_TIME_LIMIT_SEC
+      timeLimit: CALL_HARD_TIME_LIMIT_SEC,
+      machineDetection: 'Enable',
+      asyncAmd: true,
+      asyncAmdStatusCallback: 'https://talk-bridge.org/api/call/amd-callback',
+      asyncAmdStatusCallbackMethod: 'POST'
     });
     const callB = await twilioClient.calls.create({
       to: partyB,
@@ -603,7 +676,11 @@ app.post('/api/call/bridge', async (req, res) => {
       url: `https://talk-bridge.org/api/call/stream-twiml?room=${encodeURIComponent(room)}&leg=B&lang=${encodeURIComponent(langB || 'es')}&record=${recordFlag}`,
       statusCallback: 'https://talk-bridge.org/api/call/status',
       statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'],
-      timeLimit: CALL_HARD_TIME_LIMIT_SEC
+      timeLimit: CALL_HARD_TIME_LIMIT_SEC,
+      machineDetection: 'Enable',
+      asyncAmd: true,
+      asyncAmdStatusCallback: 'https://talk-bridge.org/api/call/amd-callback',
+      asyncAmdStatusCallbackMethod: 'POST'
     });
     // Tracked regardless of recording -- this is what lets /api/call/status attribute
     // Twilio's own reported CallDuration back to the right user + route for the
@@ -613,6 +690,8 @@ app.post('/api/call/bridge', async (req, res) => {
     // recording no-answer cleanup below, which still keys off roomBySid.
     callUsageMeta.set(callA.sid, { uid, route, leg: 'A' });
     callUsageMeta.set(callB.sid, { uid, route, leg: 'B' });
+    callPairBySid.set(callA.sid, { room, otherSid: callB.sid, leg: 'A' });
+    callPairBySid.set(callB.sid, { room, otherSid: callA.sid, leg: 'B' });
     if (record) {
       roomBySid.set(callA.sid, room);
       roomBySid.set(callB.sid, room);
@@ -670,6 +749,7 @@ app.post('/api/call/stream-twiml', (req, res) => {
   stream.parameter({ name: 'leg', value: leg });
   stream.parameter({ name: 'lang', value: lang });
   stream.parameter({ name: 'record', value: record ? '1' : '0' });
+  stream.parameter({ name: 'callSid', value: req.body?.CallSid || '' });
   res.type('text/xml');
   res.send(twiml.toString());
 });
@@ -867,6 +947,7 @@ setInterval(() => {
 }, 60 * 1000);
 const recordingRooms = new Map(); // room -> { A: {path, done}, B: {path, done} }
 const roomBySid = new Map(); // callSid -> room (only tracked when recording is on, for no-answer cleanup)
+const callPairBySid = new Map(); // callSid -> { room, otherSid, leg } -- tracked for every bridge call, used by the AMD callback to hang up both legs if either hits voicemail
 function cleanupFailedRecording(room) {
   if (!recordingRooms.has(room)) return;
   recordingRooms.delete(room);
@@ -974,7 +1055,7 @@ const GOOGLE_TTS_VOICE_MODELS = {
   he: { languageCode: 'he-IL', name: 'he-IL-Chirp3-HD-Achernar' }
 };
 
-async function speakViaGoogleCloud(text, legInfo) {
+async function speakViaGoogleCloud(text, legInfo, pipelineStart = Date.now()) {
   const voice = GOOGLE_TTS_VOICE_MODELS[legInfo.lang];
   if (!voice) return;
   const startTime = Date.now();
@@ -1005,31 +1086,31 @@ async function speakViaGoogleCloud(text, legInfo) {
       media: { payload: audioBuffer.toString('base64') }
     }));
     const totalTime = Date.now() - startTime;
-    console.log(`[call-audio] TTS(google) complete: ${audioBuffer.length} bytes, total=${totalTime}ms (lang=${legInfo.lang})`);
+    console.log(`[call-audio] TTS(google) complete: ${audioBuffer.length} bytes, total=${totalTime}ms, pipeline-total=${Date.now() - pipelineStart}ms (lang=${legInfo.lang})`);
   } catch (err) {
     console.error(`[call-audio] TTS(google) exception message=${err?.message}`, err);
   }
 }
 
-async function speakToLeg(text, legInfo) {
+async function speakToLeg(text, legInfo, pipelineStart = Date.now()) {
   if (!legInfo || !legInfo.ws || !legInfo.streamSid || !text) return;
   if (legInfo.ws.readyState !== legInfo.ws.OPEN) {
     console.log(`[call-audio] skipping TTS send, target leg websocket not open (lang=${legInfo.lang})`);
     return;
   }
   if (TTS_VOICE_MODELS[legInfo.lang]) {
-    return speakViaDeepgram(text, legInfo);
+    return speakViaDeepgram(text, legInfo, pipelineStart);
   }
   if (ELEVENLABS_TTS_LANGUAGES.has(legInfo.lang)) {
-    return speakViaElevenLabs(text, legInfo);
+    return speakViaElevenLabs(text, legInfo, pipelineStart);
   }
   if (GOOGLE_TTS_VOICE_MODELS[legInfo.lang]) {
-    return speakViaGoogleCloud(text, legInfo);
+    return speakViaGoogleCloud(text, legInfo, pipelineStart);
   }
   console.log(`[call-audio] no TTS voice available for lang=${legInfo.lang}, skipping speak-back`);
 }
 
-async function speakViaDeepgram(text, legInfo) {
+async function speakViaDeepgram(text, legInfo, pipelineStart = Date.now()) {
   const model = TTS_VOICE_MODELS[legInfo.lang];
   const ttsUrl = `wss://api.deepgram.com/v1/speak?model=${model}&encoding=mulaw&sample_rate=8000&container=none`;
   const startTime = Date.now();
@@ -1050,7 +1131,7 @@ async function speakViaDeepgram(text, legInfo) {
     if (isBinary) {
       if (!firstChunkTime) {
         firstChunkTime = Date.now();
-        console.log(`[call-audio] TTS(deepgram) first audio chunk after ${firstChunkTime - startTime}ms (lang=${legInfo.lang})`);
+        console.log(`[call-audio] TTS(deepgram) first audio chunk after ${firstChunkTime - startTime}ms, pipeline-total=${firstChunkTime - pipelineStart}ms (lang=${legInfo.lang})`);
       }
       totalBytes += data.length;
       chunkCount += 1;
@@ -1127,7 +1208,7 @@ async function incrementElevenLabsPoolUsage(chars) {
   }
 }
 
-async function speakViaElevenLabs(text, legInfo) {
+async function speakViaElevenLabs(text, legInfo, pipelineStart = Date.now()) {
   incrementElevenLabsPoolUsage(text.length); // fire-and-forget -- shared pool tracking, doesn't block the TTS call
   const startTime = Date.now();
   let firstChunkTime = null;
@@ -1166,7 +1247,7 @@ async function speakViaElevenLabs(text, legInfo) {
     if (msg.audio) {
       if (!firstChunkTime) {
         firstChunkTime = Date.now();
-        console.log(`[call-audio] TTS(elevenlabs) first audio chunk after ${firstChunkTime - startTime}ms (lang=${legInfo.lang})`);
+        console.log(`[call-audio] TTS(elevenlabs) first audio chunk after ${firstChunkTime - startTime}ms, pipeline-total=${firstChunkTime - pipelineStart}ms (lang=${legInfo.lang})`);
       }
       totalBytes += Buffer.from(msg.audio, 'base64').length;
       chunkCount += 1;
@@ -1220,6 +1301,7 @@ callWss.on('connection', (ws) => {
       leg = params.leg || 'unknown-leg';
       const lang = params.lang || 'en';
       const record = params.record === '1';
+      const callSid = params.callSid || null;
       if (!callLegs.has(room)) callLegs.set(room, {});
       callLegs.get(room)[leg] = { ws, lang, streamSid };
       console.log(`[call-audio] stream started room=${room} leg=${leg} lang=${lang} streamSid=${streamSid} record=${record}`);
@@ -1253,14 +1335,20 @@ callWss.on('connection', (ws) => {
         const fullText = transcriptBuffer.trim();
         transcriptBuffer = '';
         if (!fullText) return;
+        if (callSid && isLikelyVoicemailText(fullText)) {
+          console.log(`[call-audio][room=${room} leg=${leg}] transcript matched voicemail/IVR pattern, hanging up: "${fullText}"`);
+          hangUpCallPair(callSid, 'voicemail/IVR phrasing detected in transcript');
+          return;
+        }
+        const pipelineStart = Date.now();
         console.log(`[call-audio][room=${room} leg=${leg}] utterance complete: "${fullText}"`);
         const otherLeg = leg === 'A' ? 'B' : 'A';
         const otherInfo = callLegs.get(room)?.[otherLeg];
         if (otherInfo && otherInfo.ws.readyState === otherInfo.ws.OPEN) {
           translateForCall(fullText, lang, otherInfo.lang)
             .then((translated) => {
-              console.log(`[call-audio][room=${room} leg=${leg}->${otherLeg}] translated: "${translated}"`);
-              speakToLeg(translated, otherInfo);
+              console.log(`[call-audio][room=${room} leg=${leg}->${otherLeg}] translated: "${translated}" (translate=${Date.now() - pipelineStart}ms)`);
+              speakToLeg(translated, otherInfo, pipelineStart);
               if (otherLeg === 'A') {
                 const subs = captionSubscribers.get(room);
                 if (subs) {
