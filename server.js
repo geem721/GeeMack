@@ -30,6 +30,39 @@ const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID;
 const FIREBASE_JWKS = createRemoteJWKSet(
   new URL('https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com')
 );
+// --- Access gate (temporary, until billing/LLC is in place) ---
+// Two independent checks: (1) Firebase's own email_verified claim must be true --
+// previously only enforced client-side in AuthGate.jsx, never checked server-side,
+// so an unverified account's ID token still passed every API route; (2) an explicit
+// allowlist of approved emails, since email verification alone doesn't limit WHO can
+// sign up, just whether they bothered to click the link. Remove the allowlist check
+// (not the email_verified one) once billing is live and signup should be open.
+const ACCESS_ALLOWLIST = new Set(
+  (process.env.ACCESS_ALLOWLIST_EMAILS || '')
+    .split(',')
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean)
+);
+const ADMIN_NOTIFY_PHONE = process.env.ADMIN_NOTIFY_PHONE;
+const blockedNotifyCooldown = new Map(); // email -> last-notified timestamp (ms)
+const BLOCKED_NOTIFY_COOLDOWN_MS = 60 * 60 * 1000; // 1 hour
+
+async function notifyBlockedAttempt(email, uid) {
+  if (!ADMIN_NOTIFY_PHONE || !email) return;
+  const last = blockedNotifyCooldown.get(email) || 0;
+  if (Date.now() - last < BLOCKED_NOTIFY_COOLDOWN_MS) return;
+  blockedNotifyCooldown.set(email, Date.now());
+  try {
+    await twilioClient.messages.create({
+      to: ADMIN_NOTIFY_PHONE,
+      from: process.env.TWILIO_PHONE_NUMBER,
+      body: `TalkBridge: blocked login attempt from ${email} (uid=${uid}) -- not on the access allowlist.`,
+    });
+  } catch (err) {
+    console.error('[auth] failed to send blocked-attempt SMS:', err.message);
+  }
+}
+
 async function verifyFirebaseToken(req) {
   const authHeader = req.headers.authorization || '';
   const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
@@ -39,6 +72,16 @@ async function verifyFirebaseToken(req) {
       issuer: `https://securetoken.google.com/${FIREBASE_PROJECT_ID}`,
       audience: FIREBASE_PROJECT_ID,
     });
+    if (!payload.email_verified) {
+      console.warn(`[auth] rejected unverified email uid=${payload.sub} email=${payload.email}`);
+      return null;
+    }
+    const email = (payload.email || '').toLowerCase();
+    if (ACCESS_ALLOWLIST.size > 0 && !ACCESS_ALLOWLIST.has(email)) {
+      console.warn(`[auth] rejected non-allowlisted email=${email} uid=${payload.sub}`);
+      notifyBlockedAttempt(payload.email, payload.sub); // fire-and-forget
+      return null;
+    }
     return payload.sub; // Firebase uid
   } catch (err) {
     console.warn('[auth] Firebase ID token rejected:', err.message);
