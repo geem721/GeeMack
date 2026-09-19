@@ -51,6 +51,8 @@ async function verifyFirebaseToken(req) {
 // atomic server-side increment (.sv increment) over plain REST + a database secret --
 // same no-Admin-SDK reasoning as above.
 const FIREBASE_DB_URL = process.env.FIREBASE_DB_URL;
+const APP_BASE_URL = process.env.APP_BASE_URL || 'https://app.talk-bridge.org';
+const APP_WS_BASE = APP_BASE_URL.replace(/^http/, 'ws');
 const FIREBASE_DB_SECRET = process.env.FIREBASE_DB_SECRET;
 const MONTHLY_TRANSLATE_CAP = 574;
 function currentMonthKey() {
@@ -525,8 +527,8 @@ app.post('/api/call/start', async (req, res) => {
     const call = await twilioClient.calls.create({
       to,
       from: process.env.TWILIO_PHONE_NUMBER,
-      url: `https://talk-bridge.org/api/call/twiml?targetLang=${encodeURIComponent(targetLang || 'es')}`,
-      statusCallback: 'https://talk-bridge.org/api/call/status',
+      url: `${APP_BASE_URL}/api/call/twiml?targetLang=${encodeURIComponent(targetLang || 'es')}`,
+      statusCallback: `${APP_BASE_URL}/api/call/status`,
       statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed']
     });
     return res.json({ sid: call.sid, status: call.status });
@@ -661,25 +663,25 @@ app.post('/api/call/bridge', async (req, res) => {
     const callA = await twilioClient.calls.create({
       to: partyA,
       from: process.env.TWILIO_PHONE_NUMBER,
-      url: `https://talk-bridge.org/api/call/stream-twiml?room=${encodeURIComponent(room)}&leg=A&lang=${encodeURIComponent(langA || 'en')}&record=${recordFlag}`,
-      statusCallback: 'https://talk-bridge.org/api/call/status',
+      url: `${APP_BASE_URL}/api/call/stream-twiml?room=${encodeURIComponent(room)}&leg=A&lang=${encodeURIComponent(langA || 'en')}&record=${recordFlag}`,
+      statusCallback: `${APP_BASE_URL}/api/call/status`,
       statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'],
       timeLimit: CALL_HARD_TIME_LIMIT_SEC,
       machineDetection: 'Enable',
       asyncAmd: true,
-      asyncAmdStatusCallback: 'https://talk-bridge.org/api/call/amd-callback',
+      asyncAmdStatusCallback: `${APP_BASE_URL}/api/call/amd-callback`,
       asyncAmdStatusCallbackMethod: 'POST'
     });
     const callB = await twilioClient.calls.create({
       to: partyB,
       from: process.env.TWILIO_PHONE_NUMBER,
-      url: `https://talk-bridge.org/api/call/stream-twiml?room=${encodeURIComponent(room)}&leg=B&lang=${encodeURIComponent(langB || 'es')}&record=${recordFlag}`,
-      statusCallback: 'https://talk-bridge.org/api/call/status',
+      url: `${APP_BASE_URL}/api/call/stream-twiml?room=${encodeURIComponent(room)}&leg=B&lang=${encodeURIComponent(langB || 'es')}&record=${recordFlag}`,
+      statusCallback: `${APP_BASE_URL}/api/call/status`,
       statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'],
       timeLimit: CALL_HARD_TIME_LIMIT_SEC,
       machineDetection: 'Enable',
       asyncAmd: true,
-      asyncAmdStatusCallback: 'https://talk-bridge.org/api/call/amd-callback',
+      asyncAmdStatusCallback: `${APP_BASE_URL}/api/call/amd-callback`,
       asyncAmdStatusCallbackMethod: 'POST'
     });
     // Tracked regardless of recording -- this is what lets /api/call/status attribute
@@ -744,7 +746,7 @@ app.post('/api/call/stream-twiml', (req, res) => {
     twiml.say('This call may be recorded for quality and translation purposes.');
   }
   const connect = twiml.connect();
-  const stream = connect.stream({ url: 'wss://talk-bridge.org/ws/call-audio' });
+  const stream = connect.stream({ url: `${APP_WS_BASE}/ws/call-audio` });
   stream.parameter({ name: 'room', value: room });
   stream.parameter({ name: 'leg', value: leg });
   stream.parameter({ name: 'lang', value: lang });
