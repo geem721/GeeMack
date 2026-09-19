@@ -63,31 +63,47 @@ async function notifyBlockedAttempt(email, uid) {
   }
 }
 
-async function verifyFirebaseToken(req) {
+// Detailed version used by /api/access-status so the frontend can show *why* it's
+// blocked (unverified vs. not-allowlisted) instead of a generic error. Every other
+// route still calls verifyFirebaseToken() below, unchanged in behavior.
+async function verifyFirebaseTokenDetailed(req) {
   const authHeader = req.headers.authorization || '';
   const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
-  if (!token) return null;
+  if (!token) return { uid: null, email: null, approved: false, reason: 'no-token' };
   try {
     const { payload } = await jwtVerify(token, FIREBASE_JWKS, {
       issuer: `https://securetoken.google.com/${FIREBASE_PROJECT_ID}`,
       audience: FIREBASE_PROJECT_ID,
     });
+    const email = (payload.email || '').toLowerCase();
     if (!payload.email_verified) {
       console.warn(`[auth] rejected unverified email uid=${payload.sub} email=${payload.email}`);
-      return null;
+      return { uid: payload.sub, email, approved: false, reason: 'unverified' };
     }
-    const email = (payload.email || '').toLowerCase();
     if (ACCESS_ALLOWLIST.size > 0 && !ACCESS_ALLOWLIST.has(email)) {
       console.warn(`[auth] rejected non-allowlisted email=${email} uid=${payload.sub}`);
       notifyBlockedAttempt(payload.email, payload.sub); // fire-and-forget
-      return null;
+      return { uid: payload.sub, email, approved: false, reason: 'not-allowlisted' };
     }
-    return payload.sub; // Firebase uid
+    return { uid: payload.sub, email, approved: true, reason: null };
   } catch (err) {
     console.warn('[auth] Firebase ID token rejected:', err.message);
-    return null;
+    return { uid: null, email: null, approved: false, reason: 'invalid-token' };
   }
 }
+
+async function verifyFirebaseToken(req) {
+  const result = await verifyFirebaseTokenDetailed(req);
+  return result.approved ? result.uid : null; // Firebase uid, or null
+}
+
+// Lets the frontend show one clean "not approved" screen instead of scattered
+// per-feature API errors. Read-only status check, not a security boundary itself --
+// verifyFirebaseToken() above still gates every real route independently.
+app.get('/api/access-status', async (req, res) => {
+  const result = await verifyFirebaseTokenDetailed(req);
+  res.json({ approved: result.approved, reason: result.reason });
+});
 
 // --- Monthly translation fair-use cap (574 msgs/user/month) ---
 // Usage counted in Firebase RTDB at usage/{uid}/{yyyy-mm}/count via RTDB's built-in

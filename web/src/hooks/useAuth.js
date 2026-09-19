@@ -57,5 +57,22 @@ export function useAuth() {
     setUser(toPlainUser(auth.currentUser));
   }, []);
 
-  return { user, loading, signIn, signUp, signOutUser, resendVerification, reloadUser };
+  // user is a plain object (see top comment), so it has no getIdToken() of its own --
+  // callers that need an ID token (e.g. AuthGate's /api/access-status check) use this
+  // instead of reaching into auth.currentUser themselves.
+  const getIdToken = useCallback(() => {
+    if (!auth.currentUser) return Promise.reject(new Error("No user signed in"));
+    return auth.currentUser.getIdToken();
+  }, []);
+
+  return {
+    user,
+    loading,
+    signIn,
+    signUp,
+    signOutUser,
+    resendVerification,
+    reloadUser,
+    getIdToken,
+  };
 }

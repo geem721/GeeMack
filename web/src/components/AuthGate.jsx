@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAuth } from "../hooks/useAuth.js";
 import { useToast } from "./Toast.jsx";
 import "./AuthGate.css";
@@ -28,8 +28,16 @@ function authErrorMessage(e, fallback) {
 }
 
 export default function AuthGate({ featureName, children }) {
-  const { user, loading, signIn, signUp, signOutUser, resendVerification, reloadUser } =
-    useAuth();
+  const {
+    user,
+    loading,
+    signIn,
+    signUp,
+    signOutUser,
+    resendVerification,
+    reloadUser,
+    getIdToken,
+  } = useAuth();
   const { showToast } = useToast();
   const [mode, setMode] = useState("login"); // "login" | "signup"
   const [email, setEmail] = useState("");
@@ -38,11 +46,54 @@ export default function AuthGate({ featureName, children }) {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
+  // "checking" | "approved" | "blocked" -- only meaningful once signed in AND
+  // email-verified. Re-checked whenever the signed-in user changes so switching
+  // accounts (sign out, sign back in as someone else) re-evaluates access.
+  const [accessStatus, setAccessStatus] = useState("checking");
+
+  useEffect(() => {
+    if (!user || !user.emailVerified) return;
+    let cancelled = false;
+    setAccessStatus("checking");
+    (async () => {
+      try {
+        const token = await getIdToken();
+        const res = await fetch("/api/access-status", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const data = await res.json();
+        if (!cancelled) setAccessStatus(data.approved ? "approved" : "blocked");
+      } catch {
+        if (!cancelled) setAccessStatus("blocked");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.uid, user?.emailVerified, getIdToken]);
+
   if (loading) {
     return <div className="auth-gate-loading">Checking sign-in status…</div>;
   }
 
   if (user && user.emailVerified) {
+    if (accessStatus === "checking") {
+      return <div className="auth-gate-loading">Checking access status…</div>;
+    }
+    if (accessStatus === "blocked") {
+      return (
+        <div className="auth-gate">
+          <div className="auth-gate-box">
+            <div className="auth-gate-icon">🚧</div>
+            <div className="auth-gate-title">Not Approved for Use at this time.</div>
+            <div className="auth-gate-sub">Logins possible soon.</div>
+            <button className="auth-gate-link" onClick={() => signOutUser()}>
+              Sign out
+            </button>
+          </div>
+        </div>
+      );
+    }
     return children(user, signOutUser);
   }
 
