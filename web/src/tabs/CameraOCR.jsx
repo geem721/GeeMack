@@ -40,10 +40,28 @@ const LANG_LABELS = Object.fromEntries(
   [...CAM_SRC_LANGUAGES, ...CAM_TGT_LANGUAGES].map((l) => [l.code, l.label]),
 );
 
-// Same fixed OCR language set the legacy app always passes to Tesseract, regardless of
-// the camSrcLang dropdown — that dropdown only feeds the /api/translate call, it never
-// changed which OCR language packs Tesseract loaded. Carried over as-is.
-const TESSERACT_LANGS = "eng+spa+fra+deu+chi_sim+jpn+kor+ara+rus";
+// Maps the camSrcLang dropdown to the specific Tesseract language pack to load for OCR.
+// Loading unrelated scripts together in one Tesseract pass (the old behavior: always
+// loading all nine languages regardless of the dropdown) makes Tesseract misread plain
+// Latin letters as Chinese/Japanese/Korean characters -- a real bug testers hit, not a
+// hypothetical. A specific selection now loads ONLY that language's pack.
+const TESSERACT_LANG_MAP = {
+  en: "eng",
+  es: "spa",
+  fr: "fra",
+  de: "deu",
+  zh: "chi_sim",
+  ja: "jpn",
+  ko: "kor",
+  ar: "ara",
+  ru: "rus",
+  hi: "hin",
+};
+
+// "Auto" can't ask Tesseract to detect a script ahead of time, so instead of one big
+// mixed-script pass, it runs two smaller, script-grouped passes in parallel and keeps
+// whichever one Tesseract itself is more confident in.
+const TESSERACT_AUTO_GROUPS = ["eng+spa+fra+deu", "chi_sim+jpn+kor+ara+rus+hin"];
 
 const AUTO_CAPTURE_INTERVAL_MS = 4000;
 
@@ -119,6 +137,25 @@ export default function CameraOCR() {
     setCameraOn(false);
   }
 
+  // Picks the right Tesseract call for the current source-language selection. See the
+  // TESSERACT_LANG_MAP / TESSERACT_AUTO_GROUPS comment above for why this isn't just one
+  // fixed multi-language pass anymore.
+  //
+  // NOTE: an attempt to also force sparse-text page segmentation here (via
+  // Tesseract.createWorker + worker.setParameters) crashed in production with
+  // "Cannot read properties of null (reading 'setVariable')" -- reverted until the
+  // correct API usage for this Tesseract.js build is confirmed. See conversation notes.
+  async function recognizeCanvas() {
+    const mapped = TESSERACT_LANG_MAP[srcLang];
+    if (mapped) {
+      return window.Tesseract.recognize(canvasRef.current, mapped);
+    }
+    const results = await Promise.all(
+      TESSERACT_AUTO_GROUPS.map((langs) => window.Tesseract.recognize(canvasRef.current, langs)),
+    );
+    return results.reduce((best, r) => (r.data.confidence > best.data.confidence ? r : best));
+  }
+
   // Shared by both live-camera capture and photo upload: runs Tesseract + translate on
   // whatever's already drawn onto canvasRef, then updates the result state. Neither
   // caller needs to know how the canvas got populated.
@@ -137,7 +174,7 @@ export default function CameraOCR() {
     try {
       const {
         data: { text },
-      } = await window.Tesseract.recognize(canvasRef.current, TESSERACT_LANGS);
+      } = await recognizeCanvas();
       const cleanedText = text.trim().replace(/\n{3,}/g, "\n\n");
       if (!cleanedText) {
         showToast("No text detected");
@@ -257,6 +294,12 @@ export default function CameraOCR() {
         )}
       </div>
 
+      {cameraOn && singleCameraOnly && (
+        <div className="cam-hint">
+          Hold your document or photo up to the screen, then tap "Capture &amp; Translate" below.
+        </div>
+      )}
+
       <div className="lang-bar cam-lang-bar">
         <select className="lang-sel" value={srcLang} onChange={(e) => setSrcLang(e.target.value)}>
           {CAM_SRC_LANGUAGES.map((l) => (
@@ -277,9 +320,20 @@ export default function CameraOCR() {
 
       <div className="cam-controls">
         {!cameraOn ? (
-          <button className="btn btn-primary" style={{ flex: 1 }} onClick={startCamera}>
-            📷 Start Camera
-          </button>
+          singleCameraOnly ? (
+            <button
+              className="btn btn-primary"
+              style={{ flex: 1 }}
+              onClick={triggerFileUpload}
+              disabled={busy}
+            >
+              📁 Upload a Photo
+            </button>
+          ) : (
+            <button className="btn btn-primary" style={{ flex: 1 }} onClick={startCamera}>
+              📷 Start Camera
+            </button>
+          )
         ) : (
           <>
             <button
@@ -297,16 +351,24 @@ export default function CameraOCR() {
         )}
       </div>
 
-      <div className="cam-fullscreen-row">
-        <button
-          className="btn btn-secondary"
-          style={{ width: "100%" }}
-          onClick={triggerFileUpload}
-          disabled={busy}
-        >
-          📁 Upload a Photo Instead
-        </button>
-      </div>
+      {!cameraOn && (
+        <div className="cam-fullscreen-row">
+          {singleCameraOnly ? (
+            <button className="btn btn-secondary" style={{ width: "100%" }} onClick={startCamera}>
+              📷 Use Camera Instead
+            </button>
+          ) : (
+            <button
+              className="btn btn-secondary"
+              style={{ width: "100%" }}
+              onClick={triggerFileUpload}
+              disabled={busy}
+            >
+              📁 Upload a Photo Instead
+            </button>
+          )}
+        </div>
+      )}
 
       <div className="ocr-result">
         <div className="ocr-result-header">

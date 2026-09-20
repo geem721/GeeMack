@@ -117,3 +117,14 @@
 .cam-fullscreen-row {
   display: flex;
 }
+
+.cam-hint {
+  font-size: 13px;
+  line-height: 1.4;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.55);
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin: 6px 0 4px;
+  text-align: center;
+}
