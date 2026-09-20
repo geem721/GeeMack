@@ -10,6 +10,7 @@ import deepgramSdk from '@deepgram/sdk';
 const { createClient, LiveTranscriptionEvents } = deepgramSdk;
 import { AccessToken, RoomServiceClient } from 'livekit-server-sdk';
 import twilio from 'twilio';
+import nodemailer from 'nodemailer';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -20,6 +21,15 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 app.use(express.static(path.join(__dirname, 'public')));
 const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+const mailTransporter = process.env.SMTP_USER && process.env.SMTP_APP_PASSWORD
+  ? nodemailer.createTransport({
+      service: 'gmail',
+      auth: {
+        user: process.env.SMTP_USER,
+        pass: process.env.SMTP_APP_PASSWORD,
+      },
+    })
+  : null;
 
 // --- Firebase ID token verification (no Admin SDK / service-account key needed) ---
 // Verifies the JWT Firebase Auth issues against Google's public keys. Used to identify
@@ -44,22 +54,39 @@ const ACCESS_ALLOWLIST = new Set(
     .filter(Boolean)
 );
 const ADMIN_NOTIFY_PHONE = process.env.ADMIN_NOTIFY_PHONE;
+const ADMIN_NOTIFY_EMAIL = process.env.ADMIN_NOTIFY_EMAIL || process.env.SMTP_USER;
 const blockedNotifyCooldown = new Map(); // email -> last-notified timestamp (ms)
 const BLOCKED_NOTIFY_COOLDOWN_MS = 60 * 60 * 1000; // 1 hour
 
 async function notifyBlockedAttempt(email, uid) {
-  if (!ADMIN_NOTIFY_PHONE || !email) return;
+  if (!email) return;
   const last = blockedNotifyCooldown.get(email) || 0;
   if (Date.now() - last < BLOCKED_NOTIFY_COOLDOWN_MS) return;
   blockedNotifyCooldown.set(email, Date.now());
-  try {
-    await twilioClient.messages.create({
-      to: ADMIN_NOTIFY_PHONE,
-      from: process.env.TWILIO_PHONE_NUMBER,
-      body: `TalkBridge: blocked login attempt from ${email} (uid=${uid}) -- not on the access allowlist.`,
-    });
-  } catch (err) {
-    console.error('[auth] failed to send blocked-attempt SMS:', err.message);
+  const message = `TalkBridge: blocked login attempt from ${email} (uid=${uid}) -- not on the access allowlist.`;
+  if (ADMIN_NOTIFY_PHONE) {
+    try {
+      await twilioClient.messages.create({
+        to: ADMIN_NOTIFY_PHONE,
+        from: process.env.TWILIO_PHONE_NUMBER,
+        body: message,
+      });
+    } catch (err) {
+      console.error('[auth] failed to send blocked-attempt SMS:', err.message);
+    }
+  }
+  if (mailTransporter && ADMIN_NOTIFY_EMAIL) {
+    try {
+      await mailTransporter.sendMail({
+        from: process.env.SMTP_USER,
+        to: ADMIN_NOTIFY_EMAIL,
+        subject: 'TalkBridge: blocked login attempt',
+        text: message,
+      });
+      console.log(`[auth] sent blocked-attempt email to ${ADMIN_NOTIFY_EMAIL}`);
+    } catch (err) {
+      console.error('[auth] failed to send blocked-attempt email:', err.message);
+    }
   }
 }
 
