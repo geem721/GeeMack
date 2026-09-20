@@ -59,6 +59,7 @@ export default function CameraOCR() {
   const [detectedLangName, setDetectedLangName] = useState("");
   const [ocrError, setOcrError] = useState(null);
   const [fullScreenOpen, setFullScreenOpen] = useState(false);
+  const [singleCameraOnly, setSingleCameraOnly] = useState(false);
 
   // Shared, persisted behavior settings — see useSettings.jsx / Settings.jsx.
   const { settings } = useSettings();
@@ -69,6 +70,7 @@ export default function CameraOCR() {
   const streamRef = useRef(null);
   const autoCaptureTimerRef = useRef(null);
   const busyRef = useRef(false);
+  const fileInputRef = useRef(null);
 
   useEffect(() => {
     busyRef.current = busy;
@@ -79,6 +81,19 @@ export default function CameraOCR() {
       stopCamera();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Best-effort device check: most laptops have exactly one (front-facing) camera, so
+  // "point your camera at a document" doesn't work there the way it does on a phone.
+  // When we can only see one video input, steer people toward uploading a photo instead.
+  useEffect(() => {
+    navigator.mediaDevices
+      ?.enumerateDevices?.()
+      .then((devices) => {
+        const cameraCount = devices.filter((d) => d.kind === "videoinput").length;
+        setSingleCameraOnly(cameraCount <= 1);
+      })
+      .catch(() => {});
   }, []);
 
   async function startCamera() {
@@ -104,22 +119,14 @@ export default function CameraOCR() {
     setCameraOn(false);
   }
 
-  async function captureAndOCR() {
-    if (busyRef.current) return; // legacy app has no guard here, but auto-capture at 4s
-    // intervals can otherwise stack overlapping OCR passes on a slow device — a small,
-    // safe addition, not a behavior change under normal (manual capture) use.
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-    if (!video || !canvas || !streamRef.current) return;
-
+  // Shared by both live-camera capture and photo upload: runs Tesseract + translate on
+  // whatever's already drawn onto canvasRef, then updates the result state. Neither
+  // caller needs to know how the canvas got populated.
+  async function runOcrOnCanvas() {
     if (!window.Tesseract) {
       showToast("OCR engine still loading — try again in a moment");
       return;
     }
-
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    canvas.getContext("2d").drawImage(video, 0, 0);
 
     setBusy(true);
     setOcrError(null);
@@ -130,7 +137,7 @@ export default function CameraOCR() {
     try {
       const {
         data: { text },
-      } = await window.Tesseract.recognize(canvas, TESSERACT_LANGS);
+      } = await window.Tesseract.recognize(canvasRef.current, TESSERACT_LANGS);
       const cleanedText = text.trim().replace(/\n{3,}/g, "\n\n");
       if (!cleanedText) {
         showToast("No text detected");
@@ -147,6 +154,47 @@ export default function CameraOCR() {
     } finally {
       setBusy(false);
     }
+  }
+
+  async function captureAndOCR() {
+    if (busyRef.current) return; // legacy app has no guard here, but auto-capture at 4s
+    // intervals can otherwise stack overlapping OCR passes on a slow device — a small,
+    // safe addition, not a behavior change under normal (manual capture) use.
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas || !streamRef.current) return;
+
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext("2d").drawImage(video, 0, 0);
+
+    await runOcrOnCanvas();
+  }
+
+  function triggerFileUpload() {
+    fileInputRef.current?.click();
+  }
+
+  async function handleFileSelected(e) {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow re-selecting the same file later
+    if (!file || busyRef.current) return;
+
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const bitmap = await createImageBitmap(file).catch(() => null);
+    if (!bitmap) {
+      showToast("Couldn't read that image");
+      return;
+    }
+
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    canvas.getContext("2d").drawImage(bitmap, 0, 0);
+    bitmap.close?.();
+
+    await runOcrOnCanvas();
   }
 
   // Auto-capture is now a shared setting (Settings.jsx), not a local checkbox this tab
@@ -189,11 +237,22 @@ export default function CameraOCR() {
       <div className="camera-wrap">
         <video ref={videoRef} autoPlay playsInline muted />
         <canvas ref={canvasRef} style={{ display: "none" }} />
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          style={{ display: "none" }}
+          onChange={handleFileSelected}
+        />
         {!cameraOn && (
           <div className="camera-overlay">
             <div className="camera-overlay-icon">📷</div>
             <div className="camera-overlay-title">Camera Live OCR</div>
-            <div className="camera-overlay-sub">Point at text — signs, menus, documents</div>
+            <div className="camera-overlay-sub">
+              {singleCameraOnly
+                ? "On a laptop? Upload a photo below instead of using the camera."
+                : "Point at text — signs, menus, documents"}
+            </div>
           </div>
         )}
       </div>
@@ -236,6 +295,17 @@ export default function CameraOCR() {
             </button>
           </>
         )}
+      </div>
+
+      <div className="cam-fullscreen-row">
+        <button
+          className="btn btn-secondary"
+          style={{ width: "100%" }}
+          onClick={triggerFileUpload}
+          disabled={busy}
+        >
+          📁 Upload a Photo Instead
+        </button>
       </div>
 
       <div className="ocr-result">
