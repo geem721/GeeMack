@@ -171,3 +171,55 @@
   object-fit: contain;
   background: #000;
 }
+
+/* --- reactions --- */
+.vc-reaction-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.vc-reaction-picker {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  display: flex;
+  gap: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px;
+  z-index: 20;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25);
+}
+
+.vc-reaction-picker-btn {
+  border: none;
+  background: transparent;
+  font-size: 20px;
+  line-height: 1;
+  padding: 4px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.vc-reaction-picker-btn:hover {
+  background: rgba(58, 99, 240, 0.12);
+}
+
+.vc-tile-reaction {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  font-size: 28px;
+  z-index: 4;
+  animation: vc-reaction-float 2.2s ease-out forwards;
+  pointer-events: none;
+}
+
+@keyframes vc-reaction-float {
+  0% { opacity: 0; transform: translateY(10px) scale(0.6); }
+  15% { opacity: 1; transform: translateY(0) scale(1.1); }
+  30% { transform: translateY(-4px) scale(1); }
+  75% { opacity: 1; transform: translateY(-30px) scale(1); }
+  100% { opacity: 0; transform: translateY(-46px) scale(0.9); }
+}

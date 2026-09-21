@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Room, RoomEvent, Track, createLocalVideoTrack, createLocalAudioTrack, createLocalScreenTracks } from "livekit-client";
+
+const REACTION_EMOJIS = ["👍", "❤️", "😂", "👏", "🎉", "😮"];
 import { ref, onValue, off, set, serverTimestamp } from "firebase/database";
 import { auth, db } from "../firebase.js";
 import { callTranslate } from "../api/translate.js";
@@ -52,6 +54,7 @@ function MeetingsPanel({ user, onSignOut, initialMeetingId }) {
   const [speakLang, setSpeakLang] = useState("en");
   const [showLang, setShowLang] = useState("en");
   const [inviteOpen, setInviteOpen] = useState(false);
+  const [reactionPickerOpen, setReactionPickerOpen] = useState(false);
   const [scheduleInput, setScheduleInput] = useState("");
   const [scheduledInfo, setScheduledInfo] = useState(null);
   const [isHost, setIsHost] = useState(false);
@@ -180,6 +183,26 @@ function MeetingsPanel({ user, onSignOut, initialMeetingId }) {
     capDiv.textContent = text;
     clearTimeout(capDiv._hideTimer);
     capDiv._hideTimer = setTimeout(() => { capDiv.textContent = ""; }, 6000);
+  }
+  function showReaction(identity, emoji) {
+    const grid = gridRef.current;
+    if (!grid) return;
+    const wrapper = grid.querySelector(`[data-identity="${CSS.escape(identity)}"]`);
+    if (!wrapper) return;
+    const el = document.createElement("div");
+    el.className = "vc-tile-reaction";
+    el.textContent = emoji;
+    wrapper.appendChild(el);
+    setTimeout(() => el.remove(), 2300);
+  }
+  function sendReaction(emoji) {
+    showReaction("You (local)", emoji);
+    if (livekitRoomRef.current) {
+      const payload = new TextEncoder().encode(JSON.stringify({ type: "reaction", emoji }));
+      livekitRoomRef.current.localParticipant.publishData(payload, { reliable: true }).catch((err) =>
+        console.error("[reaction] publishData failed:", err),
+      );
+    }
   }
   function startCaptionStream() {
     const lang = speakLangRef.current;
@@ -505,6 +528,17 @@ function MeetingsPanel({ user, onSignOut, initialMeetingId }) {
           delete next[participant.identity];
           return next;
         });
+      });
+      livekitRoom.on(RoomEvent.DataReceived, (payload, participant) => {
+        if (!participant) return;
+        try {
+          const msg = JSON.parse(new TextDecoder().decode(payload));
+          if (msg && msg.type === "reaction" && msg.emoji) {
+            showReaction(participant.identity, msg.emoji);
+          }
+        } catch (err) {
+          console.error("[reaction] bad data payload:", err);
+        }
       });
       livekitRoom.on(RoomEvent.Disconnected, () => {
         if (!selfInitiatedDisconnectRef.current) {
@@ -887,6 +921,27 @@ function MeetingsPanel({ user, onSignOut, initialMeetingId }) {
           >
             {isScreenSharing ? "🛑 Stop Sharing" : "🖥️ Share Screen"}
           </button>
+          <div className="vc-reaction-wrap">
+            <button
+              className={"gc-pill" + (reactionPickerOpen ? " gc-pill-accent" : "")}
+              onClick={() => setReactionPickerOpen((v) => !v)}
+            >
+              😀 React
+            </button>
+            {reactionPickerOpen && (
+              <div className="vc-reaction-picker">
+                {REACTION_EMOJIS.map((emoji) => (
+                  <button
+                    key={emoji}
+                    className="vc-reaction-picker-btn"
+                    onClick={() => { sendReaction(emoji); setReactionPickerOpen(false); }}
+                  >
+                    {emoji}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
           {isHost && (
             <button className="gc-pill mt-pill-danger" onClick={endMeetingForEveryone} disabled={endBusy}>
               {endBusy ? "…" : "⛔ End Meeting for Everyone"}
