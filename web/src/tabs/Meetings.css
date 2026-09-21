@@ -58,6 +58,54 @@
   font-size: 14px;
   margin-bottom: 8px;
 }
+.mt-history-card {
+  max-width: 640px;
+  margin: 0 auto;
+  width: 100%;
+}
+.mt-history-item {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.mt-history-item-head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
+}
+.mt-history-item-date {
+  color: var(--muted);
+  font-weight: 400;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.mt-history-notes {
+  padding: 0 14px 14px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.mt-history-notes-label {
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+  margin: 10px 0 4px;
+}
+.mt-history-notes ul {
+  margin: 0;
+  padding-left: 18px;
+}
 .mt-inroom {
   display: flex;
   gap: 12px;

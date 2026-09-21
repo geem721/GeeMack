@@ -39,7 +39,7 @@ export default function Meetings({ initialMeetingId }) {
 
 function MeetingsPanel({ user, onSignOut, initialMeetingId }) {
   const { showToast } = useToast();
-  // stage: "landing" | "creating" | "preview" | "in-call"
+  // stage: "landing" | "creating" | "scheduled" | "preview" | "in-call" | "history"
   const [stage, setStage] = useState(initialMeetingId ? "preview" : "landing");
   const [meetingId, setMeetingId] = useState(initialMeetingId || "");
   const [joinCodeInput, setJoinCodeInput] = useState("");
@@ -58,6 +58,9 @@ function MeetingsPanel({ user, onSignOut, initialMeetingId }) {
   const [participants, setParticipants] = useState([]); // remote participant identities, for host controls
   const [recordingBanner, setRecordingBanner] = useState(null);
   const [isRecordingMine, setIsRecordingMine] = useState(false);
+  const [pastMeetings, setPastMeetings] = useState([]);
+  const [pastMeetingsLoading, setPastMeetingsLoading] = useState(false);
+  const [expandedMeetingId, setExpandedMeetingId] = useState(null);
   const [recordingBusy, setRecordingBusy] = useState(false);
   const [lastRecordingMeeting, setLastRecordingMeeting] = useState(null);
   const [endBusy, setEndBusy] = useState(false);
@@ -624,6 +627,23 @@ function MeetingsPanel({ user, onSignOut, initialMeetingId }) {
     setScheduleInput("");
     setScheduledInfo(null);
   }
+  async function openPastMeetings() {
+    setStage("history");
+    setExpandedMeetingId(null);
+    setPastMeetingsLoading(true);
+    try {
+      const idToken = await auth.currentUser.getIdToken();
+      const res = await fetch("/api/meetings", {
+        headers: { Authorization: `Bearer ${idToken}` },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Could not load past meetings");
+      setPastMeetings(data.meetings || []);
+    } catch (e) {
+      showToast("Could not load past meetings: " + e.message, 3000);
+    }
+    setPastMeetingsLoading(false);
+  }
   async function endMeetingForEveryone() {
     if (!isHost || endBusy) return;
     setEndBusy(true);
@@ -696,6 +716,7 @@ function MeetingsPanel({ user, onSignOut, initialMeetingId }) {
         <div className="mt-toprow">
           <span className="mt-title">🤝 Meetings</span>
           <div className="gc-account">
+            <button className="gc-icon-btn" onClick={openPastMeetings}>📝 Past Meetings</button>
             <span className="gc-account-email" title={user.email}>{user.email}</span>
             <button className="gc-icon-btn" onClick={onSignOut}>Sign out</button>
           </div>
@@ -749,6 +770,59 @@ function MeetingsPanel({ user, onSignOut, initialMeetingId }) {
             <button className="btn btn-primary" style={{ flex: "none" }} onClick={copyInviteLink}>Copy</button>
           </div>
           <button className="btn btn-primary" onClick={startScheduledMeetingNow}>Start Meeting Now</button>
+          <button className="btn btn-secondary" onClick={resetToLanding}>Back to Meetings</button>
+        </div>
+      </div>
+
+      <div className="mt-landing" style={stage === "history" ? undefined : { display: "none" }}>
+        <div className="mt-landing-card mt-history-card">
+          <div className="mt-landing-card-title">Past Meetings</div>
+          {pastMeetingsLoading && <span className="spinner" />}
+          {!pastMeetingsLoading && pastMeetings.length === 0 && (
+            <div className="mt-preview-sub">No ended meetings with notes yet.</div>
+          )}
+          {!pastMeetingsLoading && pastMeetings.map((m) => (
+            <div className="mt-history-item" key={m.id}>
+              <button
+                type="button"
+                className="mt-history-item-head"
+                onClick={() => setExpandedMeetingId(expandedMeetingId === m.id ? null : m.id)}
+              >
+                <span>{m.title || "TalkBridge Meeting"}</span>
+                <span className="mt-history-item-date">
+                  {m.endedAt ? new Date(m.endedAt).toLocaleString() : ""}
+                </span>
+              </button>
+              {expandedMeetingId === m.id && (
+                <div className="mt-history-notes">
+                  {!m.notes && <div className="mt-preview-sub">No notes generated for this meeting (no captions were logged).</div>}
+                  {m.notes && (
+                    <>
+                      <p>{m.notes.summary}</p>
+                      {m.notes.key_points?.length > 0 && (
+                        <>
+                          <div className="mt-history-notes-label">Key points</div>
+                          <ul>{m.notes.key_points.map((p, i) => <li key={i}>{p}</li>)}</ul>
+                        </>
+                      )}
+                      {m.notes.decisions?.length > 0 && (
+                        <>
+                          <div className="mt-history-notes-label">Decisions</div>
+                          <ul>{m.notes.decisions.map((p, i) => <li key={i}>{p}</li>)}</ul>
+                        </>
+                      )}
+                      {m.notes.action_items?.length > 0 && (
+                        <>
+                          <div className="mt-history-notes-label">Action items</div>
+                          <ul>{m.notes.action_items.map((p, i) => <li key={i}>{p}</li>)}</ul>
+                        </>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          ))}
           <button className="btn btn-secondary" onClick={resetToLanding}>Back to Meetings</button>
         </div>
       </div>

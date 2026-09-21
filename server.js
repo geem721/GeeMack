@@ -460,6 +460,110 @@ async function patchMeeting(meetingId, patch) {
     throw new Error('Failed to update meeting');
   }
 }
+async function indexMeetingForUser(uid, meetingId) {
+  const url = `${FIREBASE_DB_URL}/userMeetings/${uid}/${meetingId}.json?auth=${FIREBASE_DB_SECRET}`;
+  try {
+    await fetch(url, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(true),
+    });
+  } catch (err) {
+    console.error('[meetings] failed to index meeting for user:', err.message);
+  }
+}
+async function getMeetingCaptions(meetingId) {
+  const url = `${FIREBASE_DB_URL}/chats/${meetingId}/captions.json?auth=${FIREBASE_DB_SECRET}`;
+  const res = await fetch(url);
+  const val = await res.json();
+  if (!res.ok || !val) return [];
+  return Object.values(val).sort((a, b) => (a.ts || 0) - (b.ts || 0));
+}
+
+// --- Meeting notes (AI Companion-style post-meeting summary) ---
+// Reuses the raw-transcript-in, forced-tool-use-out pattern translateForCall() uses
+// below. Fed the full multi-speaker, multi-language caption log in order; Claude reads
+// every language natively and writes the notes in English, so no separate translation
+// pass is needed. Triggered fire-and-forget from POST /api/meetings/:id/end so a slow
+// or failed notes call never blocks the host's "end meeting" action.
+const MEETING_NOTES_TOOL = {
+  name: 'provide_meeting_notes',
+  description: 'Provide structured notes summarizing a meeting transcript.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      summary: { type: 'string', description: 'A 2-4 sentence overview of what the meeting covered.' },
+      key_points: { type: 'array', items: { type: 'string' }, description: 'Main discussion points, one per item.' },
+      decisions: { type: 'array', items: { type: 'string' }, description: 'Decisions that were made. Empty array if none were made.' },
+      action_items: { type: 'array', items: { type: 'string' }, description: 'Action items, naming who is responsible if that was mentioned. Empty array if none.' },
+    },
+    required: ['summary', 'key_points', 'decisions', 'action_items'],
+  },
+};
+async function generateMeetingNotes(captions) {
+  if (!captions.length) return null;
+  const transcript = captions.map((c) => `${c.from}: ${c.text}`).join('\n');
+  const systemPrompt = 'You are an assistant that writes concise, accurate meeting notes from a raw multi-speaker transcript. The transcript may mix multiple languages -- understand all of them, but write your notes in English. Do not invent anything that was not actually discussed. If there were no clear decisions or action items, return empty arrays for those fields rather than guessing. Call the provide_meeting_notes tool with your result.';
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': process.env.ANTHROPIC_API_KEY,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-5',
+      max_tokens: 1024,
+      system: systemPrompt,
+      tools: [MEETING_NOTES_TOOL],
+      tool_choice: { type: 'tool', name: 'provide_meeting_notes' },
+      messages: [{ role: 'user', content: transcript }],
+    }),
+  });
+  const data = await response.json();
+  if (data.error) throw new Error(data.error.message);
+  const toolUse = data.content?.find((b) => b.type === 'tool_use' && b.name === 'provide_meeting_notes');
+  if (toolUse?.input) return toolUse.input;
+  throw new Error('No notes returned');
+}
+async function emailMeetingNotes(toEmail, meetingTitle, notes) {
+  if (!mailTransporter || !toEmail) return;
+  const lines = [notes.summary, ''];
+  if (notes.key_points?.length) {
+    lines.push('Key points:');
+    notes.key_points.forEach((p) => lines.push(`- ${p}`));
+    lines.push('');
+  }
+  if (notes.decisions?.length) {
+    lines.push('Decisions:');
+    notes.decisions.forEach((p) => lines.push(`- ${p}`));
+    lines.push('');
+  }
+  if (notes.action_items?.length) {
+    lines.push('Action items:');
+    notes.action_items.forEach((p) => lines.push(`- ${p}`));
+    lines.push('');
+  }
+  try {
+    await mailTransporter.sendMail({
+      from: process.env.SMTP_USER,
+      to: toEmail,
+      subject: `TalkBridge meeting notes: ${meetingTitle}`,
+      text: lines.join('\n'),
+    });
+    console.log(`[meetings] sent notes email to ${toEmail}`);
+  } catch (err) {
+    console.error('[meetings] failed to send notes email:', err.message);
+  }
+}
+async function generateAndDeliverMeetingNotes(meetingId, meeting) {
+  const captions = await getMeetingCaptions(meetingId);
+  if (!captions.length) return;
+  const notes = await generateMeetingNotes(captions);
+  if (!notes) return;
+  await patchMeeting(meetingId, { notes });
+  await emailMeetingNotes(meeting.hostName, meeting.title, notes);
+}
 
 app.post('/api/meetings/create', async (req, res) => {
   const uid = await verifyFirebaseToken(req);
@@ -478,12 +582,33 @@ app.post('/api/meetings/create', async (req, res) => {
       meetingData.scheduledFor = scheduledFor;
     }
     await writeMeeting(meetingId, meetingData);
+    await indexMeetingForUser(uid, meetingId);
     return res.json({
       meetingId,
       joinLink: `https://${req.get('host')}/?tab=meetings&meeting=${meetingId}`,
       scheduledFor: meetingData.scheduledFor || null,
     });
   } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/meetings', async (req, res) => {
+  const uid = await verifyFirebaseToken(req);
+  if (!uid) return res.status(401).json({ error: 'Sign in required.' });
+  try {
+    const idxUrl = `${FIREBASE_DB_URL}/userMeetings/${uid}.json?auth=${FIREBASE_DB_SECRET}`;
+    const idxRes = await fetch(idxUrl);
+    const idx = await idxRes.json();
+    const meetingIds = idx ? Object.keys(idx) : [];
+    const meetings = await Promise.all(meetingIds.map((id) => getMeeting(id)));
+    const list = meetings
+      .map((m, i) => (m ? { id: meetingIds[i], title: m.title, createdAt: m.createdAt, endedAt: m.endedAt || null, status: m.status, notes: m.notes || null } : null))
+      .filter((m) => m && m.status === 'ended')
+      .sort((a, b) => (b.endedAt || 0) - (a.endedAt || 0));
+    return res.json({ meetings: list });
+  } catch (err) {
+    console.error('Meeting list error:', err);
     return res.status(500).json({ error: err.message });
   }
 });
@@ -579,6 +704,9 @@ app.post('/api/meetings/:id/end', async (req, res) => {
   try {
     await roomService.deleteRoom(meetingId).catch(() => {});
     await patchMeeting(meetingId, { status: 'ended', endedAt: Date.now() });
+    generateAndDeliverMeetingNotes(meetingId, meeting).catch((err) => {
+      console.error('[meetings] notes generation failed:', err.message);
+    });
     return res.json({ ok: true });
   } catch (err) {
     console.error('Meeting end error:', err);
