@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState } from "react";
+import { lazy, Suspense, useState, useEffect } from "react";
 import "./App.css";
 import "./shared.css";
 import { ToastProvider } from "./components/Toast.jsx";
@@ -61,11 +61,27 @@ function initialRouteFromUrl() {
   return { tab, room, meeting: null };
 }
 
+function getInitialTheme() {
+  try {
+    const saved = localStorage.getItem("talkbridge-theme");
+    if (saved === "light" || saved === "dark") return saved;
+  } catch (e) {}
+  return "light";
+}
+
 export default function App() {
   const [{ tab: initialTab, room: initialRoom, meeting: initialMeetingId }] = useState(initialRouteFromUrl);
   const [activeTab, setActiveTab] = useState(initialTab ?? "translate");
+  const [theme, setTheme] = useState(getInitialTheme);
   const active = TABS.find((t) => t.key === activeTab) ?? TABS[0];
   const ActiveComponent = active.Component;
+
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+    try {
+      localStorage.setItem("talkbridge-theme", theme);
+    } catch (e) {}
+  }, [theme]);
 
   return (
     <ToastProvider>
@@ -76,6 +92,16 @@ export default function App() {
             <header className="app-header">
               <span className="app-title">TalkBridge</span>
               <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
+                <button
+                  type="button"
+                  className="theme-toggle"
+                  aria-label="Switch to light mode"
+                  aria-pressed={theme === "light"}
+                  onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
+                >
+                  <span className="theme-toggle-track"><span className="theme-toggle-thumb" /></span>
+                  <span>{theme === "dark" ? "Dark" : "Light"}</span>
+                </button>
                 <span style={{ fontSize: 14, opacity: 0.8 }}>{user.email}</span>
                 <button className="btn btn-secondary" onClick={signOutUser}>
                   Sign Out
