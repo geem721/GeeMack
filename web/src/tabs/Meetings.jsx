@@ -55,6 +55,12 @@ function MeetingsPanel({ user, onSignOut, initialMeetingId }) {
   const [showLang, setShowLang] = useState("en");
   const [inviteOpen, setInviteOpen] = useState(false);
   const [reactionPickerOpen, setReactionPickerOpen] = useState(false);
+  const [pollPanelOpen, setPollPanelOpen] = useState(false);
+  const [polls, setPolls] = useState([]); // [{ id, question, options[], status, createdAt, createdBy, lang }]
+  const [pollVotes, setPollVotes] = useState({}); // pollId -> { uid: optionIndex } (anonymous in the UI: counts only)
+  const [pollTranslations, setPollTranslations] = useState({}); // `${pollId}|${lang}` -> { question, options[] }
+  const [pollDraft, setPollDraft] = useState({ question: "", options: ["", ""] });
+  const pollTranslationReqRef = useRef(new Set());
   const [scheduleInput, setScheduleInput] = useState("");
   const [scheduledInfo, setScheduledInfo] = useState(null);
   const [isHost, setIsHost] = useState(false);
@@ -98,6 +104,49 @@ function MeetingsPanel({ user, onSignOut, initialMeetingId }) {
   useEffect(() => { speakLangRef.current = speakLang; }, [speakLang]);
   useEffect(() => { showLangRef.current = showLang; }, [showLang]);
   useEffect(() => { meetingIdRef.current = meetingId; }, [meetingId]);
+
+  // Polls: live listener on chats/{meetingId}/polls + pollVotes while in the call.
+  // Votes are keyed by uid, so each person gets exactly one vote (changeable while
+  // the poll is open). Tallies are computed client-side; nothing runs on the server.
+  useEffect(() => {
+    if (stage !== "in-call" || !meetingId) return undefined;
+    const pollsRef = ref(db, `chats/${meetingId}/polls`);
+    const votesRef = ref(db, `chats/${meetingId}/pollVotes`);
+    const unsubPolls = onValue(
+      pollsRef,
+      (snap) => {
+        const val = snap.val() || {};
+        setPolls(Object.entries(val).map(([id, p]) => ({ id, ...p })).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0)));
+      },
+      (err) => console.error("[poll] listener error:", err),
+    );
+    const unsubVotes = onValue(
+      votesRef,
+      (snap) => setPollVotes(snap.val() || {}),
+      (err) => console.error("[poll] votes listener error:", err),
+    );
+    return () => { unsubPolls(); unsubVotes(); setPolls([]); setPollVotes({}); };
+  }, [stage, meetingId]);
+
+  // Translate each poll into this viewer's caption language: one callTranslate per
+  // poll per language (question + options joined by newlines), cached. If the line
+  // count comes back different, fall back to the original text rather than misalign.
+  useEffect(() => {
+    polls.forEach((p) => {
+      if (p.lang && p.lang === showLang) return;
+      const key = `${p.id}|${showLang}`;
+      if (pollTranslationReqRef.current.has(key)) return;
+      pollTranslationReqRef.current.add(key);
+      const opts = p.options || [];
+      callTranslate([p.question, ...opts].join("\n"), "auto", showLang)
+        .then((res) => {
+          const lines = String(res.translation || "").split("\n").map((s) => s.trim()).filter(Boolean);
+          if (lines.length !== 1 + opts.length) return;
+          setPollTranslations((prev) => ({ ...prev, [key]: { question: lines[0], options: lines.slice(1) } }));
+        })
+        .catch((err) => console.error("[poll] translate failed:", err));
+    });
+  }, [polls, showLang]);
   useEffect(() => { isRecordingMineRef.current = isRecordingMine; }, [isRecordingMine]);
 
   useEffect(() => {
@@ -194,6 +243,51 @@ function MeetingsPanel({ user, onSignOut, initialMeetingId }) {
     el.textContent = emoji;
     wrapper.appendChild(el);
     setTimeout(() => el.remove(), 2300);
+  }
+  // Pop the poll panel open for everyone when a new poll launches, so nobody misses it.
+  const seenPollIdsRef = useRef(new Set());
+  useEffect(() => {
+    let fresh = false;
+    polls.forEach((p) => {
+      if (seenPollIdsRef.current.has(p.id)) return;
+      seenPollIdsRef.current.add(p.id);
+      if (p.status === "open") fresh = true;
+    });
+    if (fresh) setPollPanelOpen(true);
+  }, [polls]);
+  function pollText(p) {
+    return pollTranslations[`${p.id}|${showLang}`] || { question: p.question, options: p.options || [] };
+  }
+  function pollTally(p) {
+    const counts = (p.options || []).map(() => 0);
+    Object.values(pollVotes[p.id] || {}).forEach((i) => { if (counts[i] !== undefined) counts[i] += 1; });
+    return counts;
+  }
+  async function createPoll() {
+    const question = pollDraft.question.trim();
+    const options = pollDraft.options.map((o) => o.trim()).filter(Boolean);
+    if (!question || options.length < 2) {
+      showToast("A poll needs a question and at least 2 options.");
+      return;
+    }
+    try {
+      const { push } = await import("firebase/database");
+      await push(ref(db, `chats/${meetingIdRef.current}/polls`), {
+        question, options, status: "open", createdAt: serverTimestamp(), createdBy: user.email, lang: speakLangRef.current,
+      });
+      setPollDraft({ question: "", options: ["", ""] });
+    } catch (err) {
+      console.error("[poll] create failed:", err);
+      showToast("Couldn't create the poll. Please try again.");
+    }
+  }
+  function votePoll(pollId, optionIndex) {
+    set(ref(db, `chats/${meetingIdRef.current}/pollVotes/${pollId}/${user.uid}`), optionIndex)
+      .catch((err) => console.error("[poll] vote failed:", err));
+  }
+  function closePoll(pollId) {
+    set(ref(db, `chats/${meetingIdRef.current}/polls/${pollId}/status`), "closed")
+      .catch((err) => console.error("[poll] close failed:", err));
   }
   function sendReaction(emoji) {
     showReaction("You (local)", emoji);
@@ -829,7 +923,7 @@ function MeetingsPanel({ user, onSignOut, initialMeetingId }) {
               </button>
               {expandedMeetingId === m.id && (
                 <div className="mt-history-notes">
-                  {!m.notes && <div className="mt-preview-sub">No notes generated for this meeting (no captions were logged).</div>}
+                  {!m.notes && <div className="mt-preview-sub">No notes generated for this meeting (no captions or polls were logged).</div>}
                   {m.notes && (
                     <>
                       <p>{m.notes.summary}</p>
@@ -849,6 +943,29 @@ function MeetingsPanel({ user, onSignOut, initialMeetingId }) {
                         <>
                           <div className="mt-history-notes-label">Action items</div>
                           <ul>{m.notes.action_items.map((p, i) => <li key={i}>{p}</li>)}</ul>
+                        </>
+                      )}
+                      {m.notes.polls?.length > 0 && (
+                        <>
+                          <div className="mt-history-notes-label">Polls</div>
+                          {m.notes.polls.map((poll, i) => (
+                            <div className="mt-poll" key={i} style={{ marginBottom: 10 }}>
+                              <div className="mt-poll-question">
+                                {poll.question}{" "}
+                                <span className="mt-poll-opt-count">({poll.total} vote{poll.total === 1 ? "" : "s"})</span>
+                              </div>
+                              {(poll.options || []).map((o, j) => {
+                                const pct = poll.total ? Math.round((o.votes / poll.total) * 100) : 0;
+                                return (
+                                  <div className="mt-poll-opt" key={j} style={{ cursor: "default" }}>
+                                    <span className="mt-poll-bar" style={{ width: `${pct}%` }} />
+                                    <span className="mt-poll-opt-label">{o.text}</span>
+                                    <span className="mt-poll-opt-count">{o.votes} · {pct}%</span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          ))}
                         </>
                       )}
                     </>
@@ -942,6 +1059,12 @@ function MeetingsPanel({ user, onSignOut, initialMeetingId }) {
               </div>
             )}
           </div>
+          <button
+            className={"gc-pill" + (pollPanelOpen ? " gc-pill-accent" : "")}
+            onClick={() => setPollPanelOpen((v) => !v)}
+          >
+            📊 Poll{polls.some((p) => p.status === "open") ? " •" : ""}
+          </button>
           {isHost && (
             <button className="gc-pill mt-pill-danger" onClick={endMeetingForEveryone} disabled={endBusy}>
               {endBusy ? "…" : "⛔ End Meeting for Everyone"}
@@ -950,6 +1073,92 @@ function MeetingsPanel({ user, onSignOut, initialMeetingId }) {
         </div>
         {recordingBanner && (
           <div className="vc-recording-banner">🔴 This meeting is being recorded by {recordingBanner.startedBy}</div>
+        )}
+        {pollPanelOpen && (
+          <div className="mt-poll-panel">
+            <div className="mt-poll-panel-head">
+              <span className="mt-host-panel-title">📊 Polls</span>
+              <button className="btn btn-secondary mt-poll-small" onClick={() => setPollPanelOpen(false)}>Hide</button>
+            </div>
+            {isHost && (
+              <div className="mt-poll-create">
+                <input
+                  className="gc-invite-input"
+                  placeholder="Ask a question…"
+                  maxLength={200}
+                  value={pollDraft.question}
+                  onChange={(e) => setPollDraft((d) => ({ ...d, question: e.target.value }))}
+                />
+                {pollDraft.options.map((opt, i) => (
+                  <div className="mt-poll-option-row" key={i}>
+                    <input
+                      className="gc-invite-input"
+                      placeholder={`Option ${i + 1}`}
+                      maxLength={100}
+                      value={opt}
+                      onChange={(e) => setPollDraft((d) => ({ ...d, options: d.options.map((o, j) => (j === i ? e.target.value : o)) }))}
+                    />
+                    {pollDraft.options.length > 2 && (
+                      <button
+                        className="btn btn-secondary mt-poll-small"
+                        onClick={() => setPollDraft((d) => ({ ...d, options: d.options.filter((_, j) => j !== i) }))}
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+                ))}
+                <div className="mt-poll-create-actions">
+                  {pollDraft.options.length < 6 && (
+                    <button className="btn btn-secondary mt-poll-small" onClick={() => setPollDraft((d) => ({ ...d, options: [...d.options, ""] }))}>
+                      + Add option
+                    </button>
+                  )}
+                  <button className="btn btn-primary mt-poll-small" onClick={createPoll}>Launch poll</button>
+                </div>
+              </div>
+            )}
+            {polls.length === 0 && (
+              <div className="mt-preview-sub">{isHost ? "No polls yet. Create one above." : "No polls yet. The host can start one."}</div>
+            )}
+            {[...polls].reverse().map((p) => {
+              const t = pollText(p);
+              const counts = pollTally(p);
+              const total = counts.reduce((a, b) => a + b, 0);
+              const myVote = pollVotes[p.id]?.[user.uid];
+              const open = p.status === "open";
+              return (
+                <div className="mt-poll" key={p.id}>
+                  <div className="mt-poll-question">
+                    {t.question}
+                    {!open && <span className="mt-poll-closed-tag">Closed</span>}
+                  </div>
+                  {(p.options || []).map((orig, i) => {
+                    const pct = total ? Math.round((counts[i] / total) * 100) : 0;
+                    return (
+                      <button
+                        type="button"
+                        key={i}
+                        className={"mt-poll-opt" + (myVote === i ? " mt-poll-opt-mine" : "")}
+                        disabled={!open}
+                        onClick={() => votePoll(p.id, i)}
+                      >
+                        <span className="mt-poll-bar" style={{ width: `${pct}%` }} />
+                        <span className="mt-poll-opt-label">{myVote === i ? "✓ " : ""}{t.options[i] ?? orig}</span>
+                        <span className="mt-poll-opt-count">{counts[i]} · {pct}%</span>
+                      </button>
+                    );
+                  })}
+                  <div className="mt-poll-footer">
+                    <span>{total} vote{total === 1 ? "" : "s"}{open ? " · tap to vote or change your vote" : ""}</span>
+                    {isHost && open && (
+                      <button className="btn btn-secondary mt-poll-small" onClick={() => closePoll(p.id)}>Close poll</button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         )}
         <div className="lang-bar gc-lang-bar">
           <select className="lang-sel" value={speakLang} onChange={(e) => onSpeakLangChange(e.target.value)}>

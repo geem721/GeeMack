@@ -544,6 +544,17 @@ async function emailMeetingNotes(toEmail, meetingTitle, notes) {
     notes.action_items.forEach((p) => lines.push(`- ${p}`));
     lines.push('');
   }
+  if (notes.polls?.length) {
+    lines.push('Polls:');
+    notes.polls.forEach((poll) => {
+      lines.push(`- ${poll.question} (${poll.total} vote${poll.total === 1 ? '' : 's'})`);
+      poll.options.forEach((o) => {
+        const pct = poll.total ? Math.round((o.votes / poll.total) * 100) : 0;
+        lines.push(`    ${o.text}: ${o.votes} (${pct}%)`);
+      });
+    });
+    lines.push('');
+  }
   try {
     await mailTransporter.sendMail({
       from: process.env.SMTP_USER,
@@ -556,9 +567,39 @@ async function emailMeetingNotes(toEmail, meetingTitle, notes) {
     console.error('[meetings] failed to send notes email:', err.message);
   }
 }
+// Polls for meeting notes: read polls + pollVotes over REST and tally server-side
+// (plain counting, no AI). Votes are stored per-uid; only counts leave this function.
+async function getMeetingPolls(meetingId) {
+  try {
+    const base = `${FIREBASE_DB_URL}/chats/${meetingId}`;
+    const [pRes, vRes] = await Promise.all([
+      fetch(`${base}/polls.json?auth=${FIREBASE_DB_SECRET}`),
+      fetch(`${base}/pollVotes.json?auth=${FIREBASE_DB_SECRET}`),
+    ]);
+    const polls = pRes.ok ? (await pRes.json()) || {} : {};
+    const votes = vRes.ok ? (await vRes.json()) || {} : {};
+    return Object.entries(polls)
+      .map(([id, poll]) => {
+        const options = Array.isArray(poll.options) ? poll.options : [];
+        const counts = options.map(() => 0);
+        Object.values(votes[id] || {}).forEach((i) => { if (counts[i] !== undefined) counts[i] += 1; });
+        return {
+          question: poll.question || '',
+          createdAt: poll.createdAt || 0,
+          total: counts.reduce((a, b) => a + b, 0),
+          options: options.map((text, i) => ({ text, votes: counts[i] })),
+        };
+      })
+      .sort((a, b) => a.createdAt - b.createdAt)
+      .map(({ createdAt, ...rest }) => rest);
+  } catch (err) {
+    console.error('[meetings] failed to read polls:', err.message);
+    return [];
+  }
+}
 async function generateAndDeliverMeetingNotes(meetingId, meeting) {
-  const captions = await getMeetingCaptions(meetingId);
-  if (!captions.length) return;
+  const [captions, polls] = await Promise.all([getMeetingCaptions(meetingId), getMeetingPolls(meetingId)]);
+  if (!captions.length && !polls.length) return;
   // Minimum-transcript guard: below this, skip the Claude call (no cost) and save a
   // clear "not enough conversation" note instead of the model's meta-commentary.
   // Counts characters, not words, so CJK/Thai (no spaces) aren't misjudged as short.
@@ -567,13 +608,16 @@ async function generateAndDeliverMeetingNotes(meetingId, meeting) {
   if (captions.length < 3 || transcriptChars < 100) {
     console.log(`[meetings] transcript too short for notes (lines=${captions.length}, chars=${transcriptChars}) meeting=${meetingId}`);
     notes = {
-      summary: 'Not enough conversation was captured to generate notes for this meeting. Notes are built from live captions, so participants need to speak with their mic on for a transcript to be recorded.',
+      summary: polls.length
+        ? 'Not enough conversation was captured to generate a written summary for this meeting. Poll results are included below.'
+        : 'Not enough conversation was captured to generate notes for this meeting. Notes are built from live captions, so participants need to speak with their mic on for a transcript to be recorded.',
       key_points: [], decisions: [], action_items: [], insufficient: true,
     };
   } else {
     notes = await generateMeetingNotes(captions);
   }
   if (!notes) return;
+  if (polls.length) notes.polls = polls;
   await patchMeeting(meetingId, { notes });
   await emailMeetingNotes(meeting.hostName, meeting.title, notes);
 }
