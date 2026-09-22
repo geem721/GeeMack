@@ -1,0 +1,16 @@
+/* Shared meeting whiteboard. Board surface is always white (like a real whiteboard);
+   the chrome around it follows the app's light/dark theme variables. */
+.wb-panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px; margin: 10px 0; display: flex; flex-direction: column; gap: 8px; }
+.wb-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.wb-group { display: flex; gap: 4px; align-items: center; padding-right: 8px; border-right: 1px solid var(--border); }
+.wb-group:last-child { border-right: none; padding-right: 0; }
+.wb-btn { padding: 5px 10px; font-size: 13px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface2); color: var(--text); cursor: pointer; font-family: inherit; }
+.wb-btn-active { border-color: var(--accent); background: var(--accent); color: #fff; }
+.wb-btn-danger { color: var(--danger); }
+.wb-swatch { width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--border); cursor: pointer; padding: 0; }
+.wb-swatch-active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+.wb-text-input { width: 100%; box-sizing: border-box; }
+.wb-canvas-wrap { width: 100%; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.wb-canvas { display: block; width: 100%; aspect-ratio: 16 / 9; background: #fff; touch-action: none; cursor: crosshair; }
+.wb-canvas-text { cursor: text; }
+.wb-hint { font-size: 12px; color: var(--muted); }

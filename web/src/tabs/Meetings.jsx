@@ -10,6 +10,7 @@ import { useAuth } from "../hooks/useAuth.js";
 import { LANGUAGES } from "../languages.js";
 import "./VideoCall.css";
 import "./Meetings.css";
+import Whiteboard from "../components/Whiteboard.jsx";
 
 // Meetings — TalkBridge's business video meeting feature (multi-party, host-created,
 // account-gated). A sibling to Video Call, not a mode of it: Video Call is casual
@@ -56,6 +57,10 @@ function MeetingsPanel({ user, onSignOut, initialMeetingId }) {
   const [inviteOpen, setInviteOpen] = useState(false);
   const [reactionPickerOpen, setReactionPickerOpen] = useState(false);
   const [pollPanelOpen, setPollPanelOpen] = useState(false);
+  const [wbOpen, setWbOpen] = useState(false);
+  const [wbUnseen, setWbUnseen] = useState(false); // someone drew while my board was closed
+  const wbOpenRef = useRef(false);
+  const wbLastKeyRef = useRef(undefined);
   const [polls, setPolls] = useState([]); // [{ id, question, options[], status, createdAt, createdBy, lang }]
   const [pollVotes, setPollVotes] = useState({}); // pollId -> { uid: optionIndex } (anonymous in the UI: counts only)
   const [pollTranslations, setPollTranslations] = useState({}); // `${pollId}|${lang}` -> { question, options[] }
@@ -255,6 +260,26 @@ function MeetingsPanel({ user, onSignOut, initialMeetingId }) {
     });
     if (fresh) setPollPanelOpen(true);
   }, [polls]);
+  // Whiteboard activity dot: watch only the newest item (limitToLast(1)), so this
+  // stays cheap even with a busy board, and flag it while the board is closed.
+  useEffect(() => { wbOpenRef.current = wbOpen; if (wbOpen) setWbUnseen(false); }, [wbOpen]);
+  useEffect(() => {
+    if (stage !== "in-call" || !meetingId) return undefined;
+    let unsub = () => {};
+    let cancelled = false;
+    wbLastKeyRef.current = undefined;
+    import("firebase/database").then(({ query, limitToLast }) => {
+      if (cancelled) return;
+      unsub = onValue(query(ref(db, `chats/${meetingId}/whiteboard/items`), limitToLast(1)), (snap) => {
+        let key = null;
+        snap.forEach((c) => { key = c.key; });
+        if (wbLastKeyRef.current === undefined) { wbLastKeyRef.current = key; return; }
+        if (key && key !== wbLastKeyRef.current && !wbOpenRef.current) setWbUnseen(true);
+        wbLastKeyRef.current = key;
+      });
+    });
+    return () => { cancelled = true; unsub(); setWbOpen(false); setWbUnseen(false); };
+  }, [stage, meetingId]);
   function pollText(p) {
     return pollTranslations[`${p.id}|${showLang}`] || { question: p.question, options: p.options || [] };
   }
@@ -1060,6 +1085,12 @@ function MeetingsPanel({ user, onSignOut, initialMeetingId }) {
             )}
           </div>
           <button
+            className={"gc-pill" + (wbOpen ? " gc-pill-accent" : "")}
+            onClick={() => setWbOpen((v) => !v)}
+          >
+            🖍️ Whiteboard{wbUnseen ? " •" : ""}
+          </button>
+          <button
             className={"gc-pill" + (pollPanelOpen ? " gc-pill-accent" : "")}
             onClick={() => setPollPanelOpen((v) => !v)}
           >
@@ -1160,6 +1191,7 @@ function MeetingsPanel({ user, onSignOut, initialMeetingId }) {
             })}
           </div>
         )}
+        {wbOpen && <Whiteboard meetingId={meetingId} user={user} isHost={isHost} showLang={showLang} speakLang={speakLang} />}
         <div className="lang-bar gc-lang-bar">
           <select className="lang-sel" value={speakLang} onChange={(e) => onSpeakLangChange(e.target.value)}>
             {LANGUAGES.map((l) => <option key={l.code} value={l.code}>{l.flag} {l.label}</option>)}
