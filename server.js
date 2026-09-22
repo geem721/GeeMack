@@ -559,7 +559,20 @@ async function emailMeetingNotes(toEmail, meetingTitle, notes) {
 async function generateAndDeliverMeetingNotes(meetingId, meeting) {
   const captions = await getMeetingCaptions(meetingId);
   if (!captions.length) return;
-  const notes = await generateMeetingNotes(captions);
+  // Minimum-transcript guard: below this, skip the Claude call (no cost) and save a
+  // clear "not enough conversation" note instead of the model's meta-commentary.
+  // Counts characters, not words, so CJK/Thai (no spaces) aren't misjudged as short.
+  const transcriptChars = captions.reduce((n, c) => n + String(c.text || '').trim().length, 0);
+  let notes;
+  if (captions.length < 3 || transcriptChars < 100) {
+    console.log(`[meetings] transcript too short for notes (lines=${captions.length}, chars=${transcriptChars}) meeting=${meetingId}`);
+    notes = {
+      summary: 'Not enough conversation was captured to generate notes for this meeting. Notes are built from live captions, so participants need to speak with their mic on for a transcript to be recorded.',
+      key_points: [], decisions: [], action_items: [], insufficient: true,
+    };
+  } else {
+    notes = await generateMeetingNotes(captions);
+  }
   if (!notes) return;
   await patchMeeting(meetingId, { notes });
   await emailMeetingNotes(meeting.hostName, meeting.title, notes);
