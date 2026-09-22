@@ -6,7 +6,7 @@
 // Text labels are translated into each viewer's caption language (one callTranslate
 // per label per language, cached) -- the TalkBridge twist on a standard whiteboard.
 import { useEffect, useRef, useState } from "react";
-import { ref, onValue, push, remove } from "firebase/database";
+import { ref, onValue, push, remove, update } from "firebase/database";
 import { db } from "../firebase.js";
 import { callTranslate } from "../api/translate.js";
 import "./Whiteboard.css";
@@ -18,6 +18,28 @@ const SIZES = [
   { label: "L", stroke: 0.012, text: 0.045 },
 ];
 const BOARD_BG = "#ffffff";
+const NOTE_COLORS = ["#fef08a", "#fbcfe8", "#bfdbfe", "#bbf7d0"]; // yellow, pink, blue, green
+const NOTE_W = 0.15; // fraction of board width
+const NOTE_H = 0.18; // fraction of board height
+const KANBAN = ["To Do", "In Progress", "Done"];
+// Wrap text to a max pixel width. Breaks at spaces when it can, otherwise per
+// character, so CJK/Thai (no spaces) still wrap inside a sticky note.
+function wrapLines(ctx, text, maxW) {
+  const lines = [];
+  let line = "";
+  for (const ch of String(text || "")) {
+    const test = line + ch;
+    if (ctx.measureText(test).width > maxW && line) {
+      const sp = line.lastIndexOf(" ");
+      if (sp > 0 && ch !== " ") { lines.push(line.slice(0, sp)); line = line.slice(sp + 1) + ch; }
+      else { lines.push(line); line = ch === " " ? "" : ch; }
+    } else {
+      line = test;
+    }
+  }
+  if (line) lines.push(line);
+  return lines;
+}
 const r4 = (n) => Math.round(n * 10000) / 10000;
 
 export default function Whiteboard({ meetingId, user, isHost, showLang, speakLang }) {
@@ -35,6 +57,10 @@ export default function Whiteboard({ meetingId, user, isHost, showLang, speakLan
   const [sizeIdx, setSizeIdx] = useState(1);
   const [textDraft, setTextDraft] = useState("");
   const [confirmClear, setConfirmClear] = useState(false);
+  const [noteColor, setNoteColor] = useState(NOTE_COLORS[0]);
+  const [selectedId, setSelectedId] = useState(null); // note selected with the Move tool
+  const selectedRef = useRef(null);
+  const dragRef = useRef(null); // { id, dx, dy, x, y, w, h } while dragging a note
   const itemsPath = `chats/${meetingId}/whiteboard/items`;
 
   useEffect(() => {
@@ -53,11 +79,12 @@ export default function Whiteboard({ meetingId, user, isHost, showLang, speakLan
 
   useEffect(() => {
     items.forEach((it) => {
-      if (it.type !== "text" || !it.text || (it.lang && it.lang === showLang)) return;
+      const srcText = it.type === "column" ? it.title : it.text;
+      if (!["text", "note", "column"].includes(it.type) || !srcText || (it.lang && it.lang === showLang)) return;
       const key = `${it.id}|${showLang}`;
       if (translateReqRef.current.has(key)) return;
       translateReqRef.current.add(key);
-      callTranslate(it.text, "auto", showLang)
+      callTranslate(srcText, "auto", showLang)
         .then((res) => { if (res.translation) setTranslations((prev) => ({ ...prev, [key]: res.translation })); })
         .catch((err) => console.error("[whiteboard] translate failed:", err));
     });
@@ -82,6 +109,57 @@ export default function Whiteboard({ meetingId, user, isHost, showLang, speakLan
       ctx.font = `${Math.max(10, (it.size || 0.032) * w)}px system-ui, -apple-system, "Segoe UI", sans-serif`;
       ctx.textBaseline = "top";
       ctx.fillText(label, it.x * w, it.y * h);
+    } else if (it.type === "column") {
+      const label = translationsRef.current[`${it.id}|${showLangRef.current}`] || it.title;
+      const x0 = it.x * w;
+      const cw = (it.w || 1 / 3) * w;
+      ctx.fillStyle = "#f1f5f9";
+      ctx.fillRect(x0 + 0.004 * w, 0.012 * h, cw - 0.008 * w, h - 0.024 * h);
+      ctx.fillStyle = "#334155";
+      ctx.font = `600 ${Math.max(11, 0.026 * w)}px system-ui, -apple-system, "Segoe UI", sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "top";
+      ctx.fillText(label, x0 + cw / 2, 0.03 * h);
+      ctx.textAlign = "left";
+      ctx.strokeStyle = "#cbd5e1";
+      ctx.lineWidth = Math.max(1, 0.002 * w);
+      ctx.beginPath();
+      ctx.moveTo(x0 + 0.02 * w, 0.1 * h);
+      ctx.lineTo(x0 + cw - 0.02 * w, 0.1 * h);
+      ctx.stroke();
+    } else if (it.type === "note") {
+      const drag = dragRef.current;
+      const pos = drag && drag.id === it.id ? drag : it;
+      const nx = pos.x * w;
+      const ny = pos.y * h;
+      const nw = (it.w || NOTE_W) * w;
+      const nh = (it.h || NOTE_H) * h;
+      ctx.save();
+      ctx.shadowColor = "rgba(0,0,0,0.18)";
+      ctx.shadowBlur = 0.01 * w;
+      ctx.shadowOffsetY = 0.003 * w;
+      ctx.fillStyle = it.color || NOTE_COLORS[0];
+      ctx.fillRect(nx, ny, nw, nh);
+      ctx.restore();
+      if (selectedRef.current === it.id) {
+        ctx.strokeStyle = "#2563eb";
+        ctx.lineWidth = Math.max(2, 0.003 * w);
+        ctx.strokeRect(nx, ny, nw, nh);
+      }
+      const label = translationsRef.current[`${it.id}|${showLangRef.current}`] || it.text;
+      const fs = Math.max(10, 0.016 * w);
+      const pad = 0.008 * w;
+      const lh = fs * 1.25;
+      ctx.fillStyle = "#1f2937";
+      ctx.font = `${fs}px system-ui, -apple-system, "Segoe UI", sans-serif`;
+      ctx.textBaseline = "top";
+      const lines = wrapLines(ctx, label, nw - pad * 2);
+      const maxLines = Math.max(1, Math.floor((nh - pad * 2) / lh));
+      if (lines.length > maxLines) {
+        lines.length = maxLines;
+        lines[maxLines - 1] = lines[maxLines - 1].replace(/.?$/, "…");
+      }
+      lines.forEach((ln, i) => ctx.fillText(ln, nx + pad, ny + pad + i * lh));
     }
   }
   function redraw() {
@@ -92,16 +170,21 @@ export default function Whiteboard({ meetingId, user, isHost, showLang, speakLan
     const h = canvas.height;
     ctx.fillStyle = BOARD_BG;
     ctx.fillRect(0, 0, w, h);
-    itemsRef.current.forEach((it) => drawItem(ctx, it, w, h));
+    // Layers: Kanban columns at the bottom, then ink/text, then sticky notes on top.
+    const all = itemsRef.current;
+    all.filter((it) => it.type === "column").forEach((it) => drawItem(ctx, it, w, h));
+    all.filter((it) => it.type !== "column" && it.type !== "note").forEach((it) => drawItem(ctx, it, w, h));
     if (drawingRef.current) drawItem(ctx, drawingRef.current, w, h);
+    all.filter((it) => it.type === "note").forEach((it) => drawItem(ctx, it, w, h));
   }
 
   useEffect(() => {
     itemsRef.current = items;
     translationsRef.current = translations;
     showLangRef.current = showLang;
+    selectedRef.current = selectedId;
     redraw();
-  }, [items, translations, showLang]);
+  }, [items, translations, showLang, selectedId]);
 
   useEffect(() => {
     const wrap = wrapRef.current;
@@ -131,6 +214,19 @@ export default function Whiteboard({ meetingId, user, isHost, showLang, speakLan
     if (e.button !== undefined && e.button !== 0) return;
     const [x, y] = toFrac(e);
     if (tool === "text") { placeText(x, y); return; }
+    if (tool === "note") { placeNote(x, y); return; }
+    if (tool === "move") {
+      // Topmost note under the pointer (later items draw on top).
+      const hit = [...itemsRef.current].reverse().find(
+        (it) => it.type === "note" && x >= it.x && x <= it.x + (it.w || NOTE_W) && y >= it.y && y <= it.y + (it.h || NOTE_H),
+      );
+      setSelectedId(hit ? hit.id : null);
+      if (hit) {
+        e.currentTarget.setPointerCapture(e.pointerId);
+        dragRef.current = { id: hit.id, dx: x - hit.x, dy: y - hit.y, x: hit.x, y: hit.y, w: hit.w || NOTE_W, h: hit.h || NOTE_H };
+      }
+      return;
+    }
     e.currentTarget.setPointerCapture(e.pointerId);
     const eraser = tool === "eraser";
     drawingRef.current = {
@@ -142,6 +238,14 @@ export default function Whiteboard({ meetingId, user, isHost, showLang, speakLan
     redraw();
   }
   function onPointerMove(e) {
+    const drag = dragRef.current;
+    if (drag) {
+      const [mx, my] = toFrac(e);
+      drag.x = Math.min(1 - drag.w, Math.max(0, mx - drag.dx));
+      drag.y = Math.min(1 - drag.h, Math.max(0, my - drag.dy));
+      redraw();
+      return;
+    }
     const d = drawingRef.current;
     if (!d) return;
     const [x, y] = toFrac(e);
@@ -151,6 +255,13 @@ export default function Whiteboard({ meetingId, user, isHost, showLang, speakLan
     redraw();
   }
   function onPointerUp() {
+    const drag = dragRef.current;
+    if (drag) {
+      dragRef.current = null;
+      update(ref(db, `${itemsPath}/${drag.id}`), { x: r4(drag.x), y: r4(drag.y) })
+        .catch((err) => console.error("[whiteboard] note move failed:", err));
+      return;
+    }
     const d = drawingRef.current;
     if (!d) return;
     drawingRef.current = null;
@@ -163,6 +274,29 @@ export default function Whiteboard({ meetingId, user, isHost, showLang, speakLan
       type: "text", x: r4(x), y: r4(y), text: text.slice(0, 200), color, size: SIZES[sizeIdx].text, lang: speakLang, by: user.uid,
     }).catch((err) => console.error("[whiteboard] text save failed:", err));
     setTextDraft("");
+  }
+  function placeNote(x, y) {
+    const text = textDraft.trim();
+    if (!text) return;
+    push(ref(db, itemsPath), {
+      type: "note",
+      x: r4(Math.min(1 - NOTE_W, Math.max(0, x - NOTE_W / 2))),
+      y: r4(Math.min(1 - NOTE_H, Math.max(0, y - NOTE_H / 2))),
+      w: NOTE_W, h: NOTE_H, text: text.slice(0, 140), color: noteColor, lang: speakLang, by: user.uid,
+    }).catch((err) => console.error("[whiteboard] note save failed:", err));
+    setTextDraft("");
+  }
+  function deleteSelected() {
+    if (!selectedId) return;
+    remove(ref(db, `${itemsPath}/${selectedId}`)).catch((err) => console.error("[whiteboard] note delete failed:", err));
+    setSelectedId(null);
+  }
+  function addKanban() {
+    if (!isHost || items.some((it) => it.type === "column")) return;
+    KANBAN.forEach((title, i) => {
+      push(ref(db, itemsPath), { type: "column", x: r4(i / 3), w: r4(1 / 3), title, lang: "en", by: user.uid })
+        .catch((err) => console.error("[whiteboard] kanban save failed:", err));
+    });
   }
   function undo() {
     const mine = [...items].reverse().find((it) => it.by === user.uid);
@@ -185,26 +319,26 @@ export default function Whiteboard({ meetingId, user, isHost, showLang, speakLan
     a.click();
   }
 
-  const TOOL_LABELS = { pen: "✏️ Pen", eraser: "🧽 Eraser", text: "🔤 Text" };
+  const TOOL_LABELS = { pen: "✏️ Pen", eraser: "🧽 Eraser", text: "🔤 Text", note: "🗒️ Note", move: "✋ Move" };
   return (
     <div className="wb-panel">
       <div className="wb-toolbar">
         <div className="wb-group">
           {Object.keys(TOOL_LABELS).map((t) => (
-            <button key={t} type="button" className={"wb-btn" + (tool === t ? " wb-btn-active" : "")} onClick={() => setTool(t)}>
+            <button key={t} type="button" className={"wb-btn" + (tool === t ? " wb-btn-active" : "")} onClick={() => { setTool(t); setSelectedId(null); }}>
               {TOOL_LABELS[t]}
             </button>
           ))}
         </div>
         <div className="wb-group">
-          {COLORS.map((c) => (
+          {(tool === "note" ? NOTE_COLORS : COLORS).map((c) => (
             <button
               key={c}
               type="button"
               aria-label={`Color ${c}`}
-              className={"wb-swatch" + (color === c ? " wb-swatch-active" : "")}
+              className={"wb-swatch" + ((tool === "note" ? noteColor : color) === c ? " wb-swatch-active" : "")}
               style={{ background: c }}
-              onClick={() => setColor(c)}
+              onClick={() => (tool === "note" ? setNoteColor(c) : setColor(c))}
             />
           ))}
         </div>
@@ -216,6 +350,12 @@ export default function Whiteboard({ meetingId, user, isHost, showLang, speakLan
           ))}
         </div>
         <div className="wb-group">
+          {tool === "move" && selectedId && (
+            <button type="button" className="wb-btn wb-btn-danger" onClick={deleteSelected}>🗑 Delete note</button>
+          )}
+          {isHost && !items.some((it) => it.type === "column") && (
+            <button type="button" className="wb-btn" onClick={addKanban}>📋 Kanban</button>
+          )}
           <button type="button" className="wb-btn" onClick={undo}>↶ Undo</button>
           <button type="button" className="wb-btn" onClick={downloadPng}>⬇ PNG</button>
           {isHost && (
@@ -225,10 +365,10 @@ export default function Whiteboard({ meetingId, user, isHost, showLang, speakLan
           )}
         </div>
       </div>
-      {tool === "text" && (
+      {(tool === "text" || tool === "note") && (
         <input
           className="gc-invite-input wb-text-input"
-          placeholder="Type text, then click the board to place it"
+          placeholder={tool === "note" ? "Type a sticky note, then click the board to place it" : "Type text, then click the board to place it"}
           maxLength={200}
           value={textDraft}
           onChange={(e) => setTextDraft(e.target.value)}
@@ -237,7 +377,7 @@ export default function Whiteboard({ meetingId, user, isHost, showLang, speakLan
       <div className="wb-canvas-wrap" ref={wrapRef}>
         <canvas
           ref={canvasRef}
-          className={"wb-canvas" + (tool === "text" ? " wb-canvas-text" : "")}
+          className={"wb-canvas" + (tool === "text" || tool === "note" ? " wb-canvas-text" : tool === "move" ? " wb-canvas-move" : "")}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}

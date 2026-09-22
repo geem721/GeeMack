@@ -14,3 +14,4 @@
 .wb-canvas { display: block; width: 100%; aspect-ratio: 16 / 9; background: #fff; touch-action: none; cursor: crosshair; }
 .wb-canvas-text { cursor: text; }
 .wb-hint { font-size: 12px; color: var(--muted); }
+.wb-canvas-move { cursor: grab; }
