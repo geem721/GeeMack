@@ -60,6 +60,7 @@ function MeetingsPanel({ user, onSignOut, initialMeetingId }) {
   const [wbOpen, setWbOpen] = useState(false);
   const [wbUnseen, setWbUnseen] = useState(false); // someone drew while my board was closed
   const wbOpenRef = useRef(false);
+  const wbAutoOpenedRef = useRef(false); // Sept 24: auto-open the board once per meeting on first activity
   const wbLastKeyRef = useRef(undefined);
   const [polls, setPolls] = useState([]); // [{ id, question, options[], status, createdAt, createdBy, lang }]
   const [pollVotes, setPollVotes] = useState({}); // pollId -> { uid: optionIndex } (anonymous in the UI: counts only)
@@ -280,13 +281,22 @@ function MeetingsPanel({ user, onSignOut, initialMeetingId }) {
     let unsub = () => {};
     let cancelled = false;
     wbLastKeyRef.current = undefined;
+    wbAutoOpenedRef.current = false;
     import("firebase/database").then(({ query, limitToLast }) => {
       if (cancelled) return;
       unsub = onValue(query(ref(db, `chats/${meetingId}/whiteboard/items`), limitToLast(1)), (snap) => {
         let key = null;
         snap.forEach((c) => { key = c.key; });
         if (wbLastKeyRef.current === undefined) { wbLastKeyRef.current = key; return; }
-        if (key && key !== wbLastKeyRef.current && !wbOpenRef.current) setWbUnseen(true);
+        if (key && key !== wbLastKeyRef.current && !wbOpenRef.current) {
+          if (!wbAutoOpenedRef.current) {
+            wbAutoOpenedRef.current = true;
+            setWbOpen(true);
+            showToast("🖍️ Someone started drawing — whiteboard opened", 3500);
+          } else {
+            setWbUnseen(true);
+          }
+        }
         wbLastKeyRef.current = key;
       });
     });
@@ -591,7 +601,7 @@ function MeetingsPanel({ user, onSignOut, initialMeetingId }) {
         return;
       }
       await joinCall(data.meetingId, true);
-      setInviteOpen(true); // host lands straight in the call with the invite box open, ready to share
+      showToast("Meeting started — tap ✉️ Invite to share the link", 4000); // Sept 24: invite box no longer auto-opens
     } catch (e) {
       showToast("Could not create meeting: " + e.message, 3000);
       setStage("landing");
@@ -601,7 +611,7 @@ function MeetingsPanel({ user, onSignOut, initialMeetingId }) {
     setStage("creating");
     try {
       await joinCall(meetingId, true);
-      setInviteOpen(true);
+      showToast("Meeting started — tap ✉️ Invite to share the link", 4000);
     } catch (e) {
       showToast("Could not start meeting: " + e.message, 3000);
       setStage("scheduled");
@@ -1284,8 +1294,8 @@ function MeetingsPanel({ user, onSignOut, initialMeetingId }) {
         {inviteOpen && (
           <div className="gc-invite-backdrop" onClick={(e) => e.target === e.currentTarget && setInviteOpen(false)}>
             <div className="gc-invite-box">
-              <div className="gc-invite-title">Invite to this meeting</div>
-              <div className="gc-invite-sub">Share this link — anyone with a TalkBridge account can join</div>
+              <div className="gc-invite-title">Invite more people</div>
+              <div className="gc-invite-sub">Copy this link and send it to everyone you want in the meeting — anyone with a TalkBridge account can join.</div>
               <div className="gc-invite-row">
                 <input readOnly className="gc-invite-input" value={inviteLink()} />
                 <button className="btn btn-primary" style={{ flex: "none" }} onClick={copyInviteLink}>Copy</button>
