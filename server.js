@@ -515,6 +515,35 @@ const MEETING_NOTES_TOOL = {
     required: ['summary', 'key_points', 'decisions', 'action_items'],
   },
 };
+// Sept 24: forced tool-use sometimes returns array fields as a JSON-encoded string (or a bulleted
+// string), which crashed the notes email with "key_points.forEach is not a function". Normalize every
+// list field to a clean string[] before anything downstream touches it.
+function toStringList(v) {
+  const stripTags = (s) => String(s).replace(/<\/?[a-z_]+>/gi, '').replace(/^\s*[-*\u2022]\s*/, '').trim();
+  const clean = (arr) => arr.map(stripTags).filter((s) => s && s !== '[]');
+  if (Array.isArray(v)) return clean(v);
+  if (typeof v === 'string') {
+    let t = v.trim();
+    if (!t) return [];
+    // The model sometimes leaks the rest of the tool call into one field (seen Sept 24:
+    // "<item>..</item>...</key_points><decisions>[]</decisions>...</provide_meeting_notes>").
+    t = t.replace(/<(decisions|action_items|summary)>[\s\S]*?<\/\1>/gi, '')
+         .replace(/<\/(key_points|provide_meeting_notes)>[\s\S]*$/i, '');
+    const items = [...t.matchAll(/<item>([\s\S]*?)<\/item>/gi)].map((m) => m[1]);
+    if (items.length) return clean(items);
+    if (t.startsWith('[')) {
+      try { const parsed = JSON.parse(t); if (Array.isArray(parsed)) return clean(parsed); } catch (e) { /* fall through */ }
+    }
+    return clean(t.split(/\n+/));
+  }
+  if (v && typeof v === 'object') return clean(Object.values(v));
+  return [];
+}
+function extractSection(v, tag) {
+  if (typeof v !== 'string') return undefined;
+  const m = v.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`, 'i'));
+  return m ? m[1] : undefined;
+}
 async function generateMeetingNotes(captions) {
   if (!captions.length) return null;
   const transcript = captions.map((c) => `${c.from}: ${c.text}`).join('\n');
@@ -528,7 +557,7 @@ async function generateMeetingNotes(captions) {
     },
     body: JSON.stringify({
       model: 'claude-sonnet-5',
-      max_tokens: 1024,
+      max_tokens: 2048,
       system: systemPrompt,
       tools: [MEETING_NOTES_TOOL],
       tool_choice: { type: 'tool', name: 'provide_meeting_notes' },
@@ -538,7 +567,16 @@ async function generateMeetingNotes(captions) {
   const data = await response.json();
   if (data.error) throw new Error(data.error.message);
   const toolUse = data.content?.find((b) => b.type === 'tool_use' && b.name === 'provide_meeting_notes');
-  if (toolUse?.input) return toolUse.input;
+  if (toolUse?.input) {
+    const n = toolUse.input;
+    return {
+      ...n,
+      summary: typeof n.summary === 'string' ? n.summary : String(n.summary ?? ''),
+      key_points: toStringList(n.key_points),
+      decisions: toStringList(n.decisions).length ? toStringList(n.decisions) : toStringList(extractSection(n.key_points, 'decisions')),
+      action_items: toStringList(n.action_items).length ? toStringList(n.action_items) : toStringList(extractSection(n.key_points, 'action_items')),
+    };
+  }
   throw new Error('No notes returned');
 }
 async function emailMeetingNotes(toEmail, meetingTitle, notes) {

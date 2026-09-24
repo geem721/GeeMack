@@ -151,3 +151,6 @@
   font-size: 14px;
   line-height: 1.5;
 }
+
+/* Sept 24: tile captions hidden -- the fixed bottom CC bar is the single caption display (tile overlay clipped 2-line text and duplicated the bar) */
+.vc-tile-caption { display: none !important; }
