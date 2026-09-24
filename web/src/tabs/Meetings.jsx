@@ -703,12 +703,21 @@ function MeetingsPanel({ user, onSignOut, initialMeetingId }) {
       });
       await livekitRoom.connect(url, token);
       setParticipants([...livekitRoom.remoteParticipants.keys()]);
-      const videoTrack = await createLocalVideoTrack({ facingMode: "user" });
-      const audioTrack = await createLocalAudioTrack();
-      recordingRef.current.localAudioTrack = audioTrack;
-      await livekitRoom.localParticipant.publishTrack(videoTrack);
-      await livekitRoom.localParticipant.publishTrack(audioTrack);
-      attachTrack(videoTrack, "You (local)", true);
+      // Sept 24: camera/mic failures are non-fatal. A blocked camera used to throw here and the
+      // catch disconnected the whole call ("Could not join"). Now each device is tried on its own,
+      // whatever works gets published, and a toast says what's missing.
+      let videoTrack = null;
+      let audioTrack = null;
+      try { videoTrack = await createLocalVideoTrack({ facingMode: "user" }); } catch (err) { console.warn("[join] camera unavailable:", err); }
+      try { audioTrack = await createLocalAudioTrack(); } catch (err) { console.warn("[join] mic unavailable:", err); }
+      if (audioTrack) recordingRef.current.localAudioTrack = audioTrack;
+      if (videoTrack) await livekitRoom.localParticipant.publishTrack(videoTrack);
+      if (audioTrack) await livekitRoom.localParticipant.publishTrack(audioTrack);
+      if (videoTrack) attachTrack(videoTrack, "You (local)", true);
+      if (!videoTrack || !audioTrack) {
+        const missing = !videoTrack && !audioTrack ? "camera and mic" : !videoTrack ? "camera" : "mic";
+        showToast(`Joined without ${missing} — check your browser's site permissions`, 6000);
+      }
       setCallActive(true);
       setStage("in-call");
       showToast("Meeting joined!");
