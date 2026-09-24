@@ -177,6 +177,21 @@ async function incrementMonthlyTranslateUsage(uid) {
   }
 }
 
+// Sept 24: owner/tester accounts bypass monthly caps (usage is still counted for cost tracking).
+// List in .env as OWNER_EXEMPT_EMAILS=a@x.com,b@y.com. Only ever called AFTER verifyFirebaseToken(req)
+// succeeded on this same request, so decoding the already-verified token's payload is safe.
+function isOwnerExempt(req) {
+  try {
+    const list = (process.env.OWNER_EXEMPT_EMAILS || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+    if (!list.length) return false;
+    const token = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+    const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString('utf8'));
+    return !!payload.email && list.includes(String(payload.email).toLowerCase());
+  } catch (e) {
+    return false;
+  }
+}
+
 app.post('/api/translate', async (req, res) => {
   const { text, srcLang, tgtLang } = req.body;
   if (!text) return res.status(400).json({ error: 'No text provided' });
@@ -184,7 +199,7 @@ app.post('/api/translate', async (req, res) => {
   const uid = await verifyFirebaseToken(req);
   if (!uid) return res.status(401).json({ error: 'Sign in required to translate.' });
   const usage = await getMonthlyTranslateUsage(uid);
-  if (usage >= MONTHLY_TRANSLATE_CAP) {
+  if (usage >= MONTHLY_TRANSLATE_CAP && !isOwnerExempt(req)) {
     return res.status(429).json({ error: `Monthly translation limit reached (${MONTHLY_TRANSLATE_CAP}). Resets at the start of next month. (Option to purchase more credits coming soon.)` });
   }
 
@@ -384,7 +399,7 @@ app.post('/api/livekit-token', async (req, res) => {
   const uid = await verifyFirebaseToken(req);
   if (!uid) return res.status(401).json({ error: 'Sign in required for Video Call.' });
   const videoUsageSec = await getMonthlyVideoUsageSec(uid);
-  if (videoUsageSec >= VIDEO_MONTHLY_CAP_SEC) {
+  if (videoUsageSec >= VIDEO_MONTHLY_CAP_SEC && !isOwnerExempt(req)) {
     return res.status(429).json({ error: `Monthly video call limit reached (${Math.round(VIDEO_MONTHLY_CAP_SEC / 60)} min). Resets at the start of next month. (Option to purchase more credits coming soon.)` });
   }
   try {
@@ -689,7 +704,7 @@ app.post('/api/meetings/:id/token', async (req, res) => {
   if (!meeting) return res.status(404).json({ error: 'Meeting not found.' });
   if (meeting.status === 'ended') return res.status(410).json({ error: 'This meeting has ended.' });
   const videoUsageSec = await getMonthlyVideoUsageSec(uid);
-  if (videoUsageSec >= VIDEO_MONTHLY_CAP_SEC) {
+  if (videoUsageSec >= VIDEO_MONTHLY_CAP_SEC && !isOwnerExempt(req)) {
     return res.status(429).json({ error: `Monthly video call limit reached (${Math.round(VIDEO_MONTHLY_CAP_SEC / 60)} min). Resets at the start of next month. (Option to purchase more credits coming soon.)` });
   }
   try {
@@ -924,7 +939,7 @@ app.post('/api/call/bridge', async (req, res) => {
   const route = (isNanpNumber(partyA) && isNanpNumber(partyB)) ? 'domestic' : 'international';
   const capSec = route === 'domestic' ? PHONE_DOMESTIC_CAP_SEC : PHONE_INTL_CAP_SEC;
   const usageSec = await getMonthlyPhoneUsageSec(uid, route);
-  if (usageSec >= capSec) {
+  if (usageSec >= capSec && !isOwnerExempt(req)) {
     return res.status(429).json({ error: `Monthly ${route} phone limit reached (${Math.round(capSec / 60)} min). Resets at the start of next month. (Option to purchase more credits coming soon.)` });
   }
 
