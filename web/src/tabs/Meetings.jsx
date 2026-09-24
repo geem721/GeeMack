@@ -88,6 +88,7 @@ function MeetingsPanel({ user, onSignOut, initialMeetingId }) {
   const captionWsRef = useRef(null);
   const captionRecorderRef = useRef(null);
   const captionOffRef = useRef(null);
+  const [captionLines, setCaptionLines] = useState([]); // Sept 23: visible caption strip
   const speakLangRef = useRef(speakLang);
   const showLangRef = useRef(showLang);
   const meetingIdRef = useRef(meetingId);
@@ -224,6 +225,8 @@ function MeetingsPanel({ user, onSignOut, initialMeetingId }) {
     if (wrapper) wrapper.remove();
   }
   function showCaption(identity, text) {
+    const who = String(identity).split("@")[0];
+    setCaptionLines((prev) => [...prev.slice(-2), { id: Date.now() + Math.random(), who, text }]);
     const grid = gridRef.current;
     if (!grid) return;
     const wrapper = grid.querySelector(`[data-identity="${CSS.escape(identity)}"]`);
@@ -374,20 +377,33 @@ function MeetingsPanel({ user, onSignOut, initialMeetingId }) {
     }
   }
   function listenToCaptions(meetingId) {
-    import("firebase/database").then(({ query, limitToLast }) => {
+    // Sept 23 fix: was limitToLast(1) + onValue, which only ever saw the single newest
+    // caption, so anything replaced before the listener fired was lost (host saw zero of a
+    // joiner's 78 captions in test ftk-gkuc-tcj). Now: find the newest existing key, then
+    // onChildAdded + startAfter(key) fires exactly once per NEW caption. No clock dependence.
+    setCaptionLines([]);
+    import("firebase/database").then(async ({ query, limitToLast, orderByKey, startAfter, onChildAdded, get }) => {
       const captionsRef = ref(db, `chats/${meetingId}/captions`);
-      const capQuery = query(captionsRef, limitToLast(1));
-      const handler = (snapshot) => {
-        snapshot.forEach((child) => {
-          const msg = child.val();
-          if (!msg || msg.from === user.email) return;
-          callTranslate(msg.text, "auto", showLangRef.current)
-            .then((res) => showCaption(msg.from, res.translation || msg.text))
-            .catch(() => showCaption(msg.from, msg.text));
-        });
-      };
-      onValue(capQuery, handler, (err) => console.error("[caption] listener error (permissions?):", err));
-      captionOffRef.current = () => off(capQuery, "value", handler);
+      let capQuery = query(captionsRef, orderByKey());
+      try {
+        const snap = await get(query(captionsRef, limitToLast(1)));
+        snap.forEach((c) => { capQuery = query(captionsRef, orderByKey(), startAfter(c.key)); });
+      } catch (err) {
+        console.error("[caption] history lookup failed:", err);
+      }
+      const unsub = onChildAdded(capQuery, (child) => {
+        const msg = child.val();
+        if (!msg || msg.from === user.email) return;
+        console.log("[caption] rx", msg.from, msg.text);
+        callTranslate(msg.text, "auto", showLangRef.current)
+          .then((res) => showCaption(msg.from, (res && res.translation) || msg.text))
+          .catch((err) => {
+            console.error("[caption] translate failed, showing original:", err);
+            showCaption(msg.from, msg.text);
+          });
+      }, (err) => console.error("[caption] listener error (permissions?):", err));
+      captionOffRef.current = unsub;
+      console.log("[caption] listening on", meetingId);
     });
   }
   function onSpeakLangChange(lang) {
@@ -1205,6 +1221,13 @@ function MeetingsPanel({ user, onSignOut, initialMeetingId }) {
         <button className="btn btn-danger vc-call-btn" onClick={async () => { await leaveCall(); resetToLanding(); }}>
           🔴 Leave Meeting
         </button>
+        {captionLines.length > 0 && (
+          <div className="mt-caption-strip" style={{ margin: "8px 0", padding: "8px 12px", background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 14, color: "var(--text)" }}>
+            {captionLines.map((c) => (
+              <div key={c.id}><strong>{c.who}:</strong> {c.text}</div>
+            ))}
+          </div>
+        )}
         <div className="mt-inroom">
           <div className="vc-grid" ref={gridRef} style={{ display: "flex" }} />
           {isHost && participants.length > 0 && (
