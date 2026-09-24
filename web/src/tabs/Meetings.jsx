@@ -89,6 +89,7 @@ function MeetingsPanel({ user, onSignOut, initialMeetingId }) {
   const captionRecorderRef = useRef(null);
   const captionOffRef = useRef(null);
   const [captionLines, setCaptionLines] = useState([]); // Sept 23: visible caption strip
+  const [capStatus, setCapStatus] = useState({ listening: false, rx: 0 }); // Sept 24: on-screen CC status (phones have no devtools)
   const speakLangRef = useRef(speakLang);
   const showLangRef = useRef(showLang);
   const meetingIdRef = useRef(meetingId);
@@ -224,9 +225,14 @@ function MeetingsPanel({ user, onSignOut, initialMeetingId }) {
     const wrapper = grid.querySelector(`[data-identity="${CSS.escape(identity)}"]`);
     if (wrapper) wrapper.remove();
   }
-  function showCaption(identity, text) {
+  function showCaption(identity, text, lineId) {
     const who = String(identity).split("@")[0];
-    setCaptionLines((prev) => [...prev.slice(-2), { id: Date.now() + Math.random(), who, text }]);
+    const id = lineId || Date.now() + Math.random();
+    setCaptionLines((prev) =>
+      prev.some((l) => l.id === id)
+        ? prev.map((l) => (l.id === id ? { ...l, text } : l))
+        : [...prev.slice(-2), { id, who, text }]
+    );
     const grid = gridRef.current;
     if (!grid) return;
     const wrapper = grid.querySelector(`[data-identity="${CSS.escape(identity)}"]`);
@@ -382,6 +388,7 @@ function MeetingsPanel({ user, onSignOut, initialMeetingId }) {
     // joiner's 78 captions in test ftk-gkuc-tcj). Now: find the newest existing key, then
     // onChildAdded + startAfter(key) fires exactly once per NEW caption. No clock dependence.
     setCaptionLines([]);
+    setCapStatus({ listening: false, rx: 0 });
     import("firebase/database").then(async ({ query, limitToLast, orderByKey, startAfter, onChildAdded, get }) => {
       const captionsRef = ref(db, `chats/${meetingId}/captions`);
       let capQuery = query(captionsRef, orderByKey());
@@ -395,14 +402,18 @@ function MeetingsPanel({ user, onSignOut, initialMeetingId }) {
         const msg = child.val();
         if (!msg || msg.from === user.email) return;
         console.log("[caption] rx", msg.from, msg.text);
-        callTranslate(msg.text, "auto", showLangRef.current)
-          .then((res) => showCaption(msg.from, (res && res.translation) || msg.text))
-          .catch((err) => {
-            console.error("[caption] translate failed, showing original:", err);
-            showCaption(msg.from, msg.text);
-          });
+        setCapStatus((s) => ({ ...s, rx: s.rx + 1 }));
+        // Sept 24: show the original right away, then swap in the translation (8s cap), so a
+        // slow or hung translate call can never leave the caption strip empty.
+        const lineId = child.key;
+        showCaption(msg.from, msg.text, lineId);
+        const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error("translate timeout")), 8000));
+        Promise.race([callTranslate(msg.text, "auto", showLangRef.current), timeout])
+          .then((res) => showCaption(msg.from, (res && res.translation) || msg.text, lineId))
+          .catch((err) => console.error("[caption] translate failed, keeping original:", err));
       }, (err) => console.error("[caption] listener error (permissions?):", err));
       captionOffRef.current = unsub;
+      setCapStatus((s) => ({ ...s, listening: true }));
       console.log("[caption] listening on", meetingId);
     });
   }
@@ -1221,8 +1232,13 @@ function MeetingsPanel({ user, onSignOut, initialMeetingId }) {
         <button className="btn btn-danger vc-call-btn" onClick={async () => { await leaveCall(); resetToLanding(); }}>
           🔴 Leave Meeting
         </button>
+        {callActive && (
+          <div className="mt-caption-status" style={{ fontSize: 12, color: "var(--muted)", margin: "4px 0" }}>
+            CC {capStatus.listening ? "listening" : "starting…"} · {capStatus.rx} received
+          </div>
+        )}
         {captionLines.length > 0 && (
-          <div className="mt-caption-strip" style={{ margin: "8px 0", padding: "8px 12px", background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 14, color: "var(--text)" }}>
+          <div className="mt-caption-strip" style={{ position: "fixed", left: 12, right: 12, bottom: 16, zIndex: 1000, maxWidth: 900, margin: "0 auto", padding: "10px 14px", background: "rgba(0,0,0,0.8)", color: "#fff", borderRadius: 10, fontSize: 16, lineHeight: 1.35, pointerEvents: "none", boxShadow: "0 4px 16px rgba(0,0,0,0.35)" }}>
             {captionLines.map((c) => (
               <div key={c.id}><strong>{c.who}:</strong> {c.text}</div>
             ))}
