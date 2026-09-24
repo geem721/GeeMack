@@ -177,6 +177,25 @@ async function incrementMonthlyTranslateUsage(uid) {
   }
 }
 
+// Sept 24: caption translations are billed as video/meeting minutes, not against the monthly
+// translation cap. A uid counts as "in a call" for 2 min after its last LiveKit token or 30s
+// heartbeat (in-memory; after a server restart it re-arms on the next heartbeat).
+const inCallUntil = new Map();
+function markInCall(uid) { inCallUntil.set(uid, Date.now() + 2 * 60 * 1000); }
+function isInCall(uid) { const t = inCallUntil.get(uid); return !!t && t > Date.now(); }
+async function incrementMonthlyCaptionCount(uid) {
+  const url = `${FIREBASE_DB_URL}/usage/${uid}/${currentMonthKey()}.json?auth=${FIREBASE_DB_SECRET}`;
+  try {
+    await fetch(url, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ captionCount: { '.sv': { increment: 1 } } }),
+    });
+  } catch (err) {
+    console.error('[caption-count] increment failed:', err.message);
+  }
+}
+
 // Sept 24: owner/tester accounts bypass monthly caps (usage is still counted for cost tracking).
 // List in .env as OWNER_EXEMPT_EMAILS=a@x.com,b@y.com. Only ever called AFTER verifyFirebaseToken(req)
 // succeeded on this same request, so decoding the already-verified token's payload is safe.
@@ -193,13 +212,14 @@ function isOwnerExempt(req) {
 }
 
 app.post('/api/translate', async (req, res) => {
-  const { text, srcLang, tgtLang } = req.body;
+  const { text, srcLang, tgtLang, purpose } = req.body;
   if (!text) return res.status(400).json({ error: 'No text provided' });
 
   const uid = await verifyFirebaseToken(req);
   if (!uid) return res.status(401).json({ error: 'Sign in required to translate.' });
-  const usage = await getMonthlyTranslateUsage(uid);
-  if (usage >= MONTHLY_TRANSLATE_CAP && !isOwnerExempt(req)) {
+  const isCaption = purpose === 'caption' && typeof text === 'string' && text.length <= 500 && isInCall(uid);
+  const usage = isCaption ? 0 : await getMonthlyTranslateUsage(uid);
+  if (!isCaption && usage >= MONTHLY_TRANSLATE_CAP && !isOwnerExempt(req)) {
     return res.status(429).json({ error: `Monthly translation limit reached (${MONTHLY_TRANSLATE_CAP}). Resets at the start of next month. (Option to purchase more credits coming soon.)` });
   }
 
@@ -271,7 +291,7 @@ app.post('/api/translate', async (req, res) => {
 
     const toolUse = data.content?.find(b => b.type === 'tool_use' && b.name === 'provide_translation');
     if (toolUse?.input?.translation !== undefined) {
-      incrementMonthlyTranslateUsage(uid);
+      (isCaption ? incrementMonthlyCaptionCount(uid) : incrementMonthlyTranslateUsage(uid));
       return res.status(200).json(toolUse.input);
     }
 
@@ -279,7 +299,7 @@ app.post('/api/translate', async (req, res) => {
     // safety net rather than a hard 500 if the API ever returns a plain text block
     // instead (e.g. a refusal).
     const raw = data.content?.find(b => b.type === 'text')?.text || '';
-    incrementMonthlyTranslateUsage(uid);
+    (isCaption ? incrementMonthlyCaptionCount(uid) : incrementMonthlyTranslateUsage(uid));
     return res.status(200).json({
       detected: srcLang,
       detectedName: srcName,
@@ -402,6 +422,7 @@ app.post('/api/livekit-token', async (req, res) => {
   if (videoUsageSec >= VIDEO_MONTHLY_CAP_SEC && !isOwnerExempt(req)) {
     return res.status(429).json({ error: `Monthly video call limit reached (${Math.round(VIDEO_MONTHLY_CAP_SEC / 60)} min). Resets at the start of next month. (Option to purchase more credits coming soon.)` });
   }
+  markInCall(uid);
   try {
     const at = new AccessToken(
       process.env.LIVEKIT_API_KEY,
@@ -678,6 +699,7 @@ async function generateAndDeliverMeetingNotes(meetingId, meeting) {
 app.post('/api/meetings/create', async (req, res) => {
   const uid = await verifyFirebaseToken(req);
   if (!uid) return res.status(401).json({ error: 'Sign in required to create a meeting.' });
+  markInCall(uid); // Sept 24: host counts as in-call from creation (caption billing)
   const { title, hostName, scheduledFor } = req.body || {};
   const meetingId = generateMeetingId();
   try {
@@ -745,6 +767,7 @@ app.post('/api/meetings/:id/token', async (req, res) => {
   if (videoUsageSec >= VIDEO_MONTHLY_CAP_SEC && !isOwnerExempt(req)) {
     return res.status(429).json({ error: `Monthly video call limit reached (${Math.round(VIDEO_MONTHLY_CAP_SEC / 60)} min). Resets at the start of next month. (Option to purchase more credits coming soon.)` });
   }
+  markInCall(uid);
   try {
     const at = new AccessToken(
       process.env.LIVEKIT_API_KEY,
@@ -836,6 +859,7 @@ app.post('/api/videocall/heartbeat', async (req, res) => {
   const uid = await verifyFirebaseToken(req);
   if (!uid) return res.status(401).json({ error: 'Sign in required.' });
   await incrementMonthlyVideoUsageSec(uid, VIDEO_HEARTBEAT_SEC);
+  markInCall(uid);
   const usageSec = await getMonthlyVideoUsageSec(uid);
   if (usageSec >= VIDEO_MONTHLY_CAP_SEC) {
     return res.status(200).json({ ok: false, error: `Monthly video call limit reached (${Math.round(VIDEO_MONTHLY_CAP_SEC / 60)} min). Resets at the start of next month. (Option to purchase more credits coming soon.)` });

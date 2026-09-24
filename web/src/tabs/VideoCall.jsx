@@ -314,7 +314,7 @@ function VideoCallPanel({ user, onSignOut, initialRoom }) {
         const lineId = child.key;
         showCaption(msg.from, msg.text, lineId);
         const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error("translate timeout")), 8000));
-        Promise.race([callTranslate(msg.text, "auto", showLangRef.current), timeout])
+        Promise.race([callTranslate(msg.text, "auto", showLangRef.current, { purpose: "caption" }), timeout])
           .then((res) => showCaption(msg.from, (res && res.translation) || msg.text, lineId))
           .catch((err) => console.error("[caption] translate failed, keeping original:", err));
       }, (err) => console.error("[caption] listener error (permissions?):", err));

@@ -6,7 +6,7 @@
 // current user's token as a Bearer header on every call.
 import { auth } from "../firebase.js";
 
-export async function callTranslate(text, srcLang, tgtLang) {
+export async function callTranslate(text, srcLang, tgtLang, opts = {}) {
   const user = auth.currentUser;
   if (!user) throw new Error("You must be signed in to translate.");
   const token = await user.getIdToken();
@@ -16,7 +16,7 @@ export async function callTranslate(text, srcLang, tgtLang) {
       "Content-Type": "application/json",
       Authorization: `Bearer ${token}`,
     },
-    body: JSON.stringify({ text, srcLang, tgtLang }),
+    body: JSON.stringify({ text, srcLang, tgtLang, purpose: opts.purpose }),
   });
   const data = await response.json();
   if (data.error) throw new Error(data.error);
