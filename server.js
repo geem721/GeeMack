@@ -1756,62 +1756,103 @@ wss.on('connection', (ws, req) => {
   const userAgent = req.headers['user-agent'] || 'unknown';
   console.log(`[transcribe][${connId}] client connected, lang=${lang}, ua=${userAgent}`);
 
-  const dgConnectAttemptTime = Date.now();
-  console.log(`[transcribe][${connId}] calling deepgram.listen.live() now`);
-  const dgConnection = deepgram.listen.live({
-    model: 'nova-3',
-    language: lang,
-    smart_format: true,
-    interim_results: false,
-    encoding: 'opus',
-    container: 'webm'
-  });
+  // Sept 24: resilient Deepgram session. Phone (Android Edge) captions died mid-meeting because
+  // Deepgram closed cleanly after 65 msgs and was never reopened while the phone kept sending audio.
+  // Fixes: (1) never forward empty frames (an empty send = CloseStream to Deepgram), (2) KeepAlive
+  // every 5s so short mic pauses don't hit the 10s idle timeout, (3) auto-reopen Deepgram while the
+  // client is still connected, replaying the first WebM chunk (container header) so it can decode.
+  let clientOpen = true;
+  let headerChunk = null;
+  let reconnects = 0;
+  let emptyFrames = 0;
+  let dgConnection = null;
 
-  let dgOpened = false;
-  const openWatchdog = setTimeout(() => {
-    if (!dgOpened) {
-      console.warn(`[transcribe][${connId}] WARNING: Deepgram Open event has NOT fired after 8000ms`);
-    }
-  }, 8000);
-  dgConnection.on(LiveTranscriptionEvents.Open, () => {
-    dgOpened = true;
-    clearTimeout(openWatchdog);
-    const elapsed = Date.now() - dgConnectAttemptTime;
-    console.log(`[transcribe][${connId}] Deepgram connection opened (took ${elapsed}ms)`);
-  });
+  function openDeepgram() {
+    const attemptTime = Date.now();
+    console.log(`[transcribe][${connId}] calling deepgram.listen.live() now${reconnects ? ` (reconnect #${reconnects})` : ''}`);
+    const conn = deepgram.listen.live({
+      model: 'nova-3',
+      language: lang,
+      smart_format: true,
+      interim_results: false,
+      encoding: 'opus',
+      container: 'webm'
+    });
+    dgConnection = conn;
 
-  dgConnection.on(LiveTranscriptionEvents.Transcript, (data) => {
-    const transcript = data?.channel?.alternatives?.[0]?.transcript;
-    console.log(`[transcribe][${connId}] transcript event, final=${data.is_final}, text="${transcript}"`);
-    if (transcript && transcript.trim() && data.is_final) {
-      if (ws.readyState === ws.OPEN) {
-        ws.send(JSON.stringify({ type: 'transcript', text: transcript.trim() }));
+    let opened = false;
+    const openWatchdog = setTimeout(() => {
+      if (!opened) console.warn(`[transcribe][${connId}] WARNING: Deepgram Open event has NOT fired after 8000ms`);
+    }, 8000);
+
+    conn.on(LiveTranscriptionEvents.Open, () => {
+      opened = true;
+      clearTimeout(openWatchdog);
+      console.log(`[transcribe][${connId}] Deepgram connection opened (took ${Date.now() - attemptTime}ms)`);
+      if (reconnects > 0 && headerChunk) {
+        try { conn.send(headerChunk); console.log(`[transcribe][${connId}] replayed WebM header chunk after reconnect`); } catch (e) { /* ignore */ }
       }
-    }
-  });
+    });
 
-  dgConnection.on(LiveTranscriptionEvents.Error, (err) => {
-    console.error(`[transcribe][${connId}] Deepgram error:`, err);
-  });
+    conn.on(LiveTranscriptionEvents.Transcript, (data) => {
+      const transcript = data?.channel?.alternatives?.[0]?.transcript;
+      console.log(`[transcribe][${connId}] transcript event, final=${data.is_final}, text="${transcript}"`);
+      if (transcript && transcript.trim() && data.is_final) {
+        if (ws.readyState === ws.OPEN) {
+          ws.send(JSON.stringify({ type: 'transcript', text: transcript.trim() }));
+        }
+      }
+    });
 
-  dgConnection.on(LiveTranscriptionEvents.Close, (event) => {
-    console.log(`[transcribe][${connId}] Deepgram connection closed, bytesReceived=${bytesReceived}, msgCount=${msgCount}, code=${event?.code}, reason=${event?.reason}, wasClean=${event?.wasClean}`);
-  });
+    conn.on(LiveTranscriptionEvents.Error, (err) => {
+      console.error(`[transcribe][${connId}] Deepgram error:`, err);
+    });
+
+    conn.on(LiveTranscriptionEvents.Close, (event) => {
+      clearTimeout(openWatchdog);
+      console.log(`[transcribe][${connId}] Deepgram connection closed, bytesReceived=${bytesReceived}, msgCount=${msgCount}, code=${event?.code}, reason=${event?.reason}, wasClean=${event?.wasClean}`);
+      if (conn !== dgConnection) return; // already superseded
+      if (clientOpen && reconnects < 20) {
+        reconnects += 1;
+        console.log(`[transcribe][${connId}] client still connected - reopening Deepgram (#${reconnects})`);
+        setTimeout(() => { if (clientOpen) openDeepgram(); }, 500);
+      }
+    });
+  }
+  openDeepgram();
+
+  const keepAliveTimer = setInterval(() => {
+    try {
+      if (dgConnection && dgConnection.getReadyState() === 1) {
+        if (typeof dgConnection.keepAlive === 'function') dgConnection.keepAlive();
+        else dgConnection.send(JSON.stringify({ type: 'KeepAlive' }));
+      }
+    } catch (e) { /* ignore */ }
+  }, 5000);
 
   ws.on('message', (data) => {
-    bytesReceived += data.length || 0;
+    const len = data.length || data.byteLength || 0;
+    if (len === 0) {
+      emptyFrames += 1;
+      if (emptyFrames <= 3) console.log(`[transcribe][${connId}] skipped empty audio frame #${emptyFrames} (would have closed Deepgram)`);
+      return;
+    }
+    bytesReceived += len;
     msgCount += 1;
+    if (!headerChunk) headerChunk = data;
     if (msgCount % 20 === 0) {
       console.log(`[transcribe][${connId}] audio received so far: ${bytesReceived} bytes in ${msgCount} messages`);
     }
-    if (dgConnection.getReadyState() === 1 /* OPEN */) {
+    if (dgConnection && dgConnection.getReadyState() === 1 /* OPEN */) {
       dgConnection.send(data);
     }
   });
 
   ws.on('close', () => {
-    console.log('[transcribe] client disconnected');
-    try { dgConnection.finish(); } catch (e) { /* already closed */ }
+    clientOpen = false;
+    clearInterval(keepAliveTimer);
+    console.log(`[transcribe][${connId}] client disconnected (reconnects=${reconnects}, emptyFrames=${emptyFrames})`);
+    try { dgConnection && dgConnection.finish(); } catch (e) { /* already closed */ }
   });
 
   ws.on('error', (err) => {

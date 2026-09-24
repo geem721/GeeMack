@@ -89,6 +89,7 @@ function MeetingsPanel({ user, onSignOut, initialMeetingId }) {
   const captionRecorderRef = useRef(null);
   const captionOffRef = useRef(null);
   const [captionLines, setCaptionLines] = useState([]); // Sept 23: visible caption strip
+  const capHideTimerRef = useRef(null); // Sept 24: auto-hide CC bar after 6s of silence
   const [capStatus, setCapStatus] = useState({ listening: false, rx: 0 }); // Sept 24: on-screen CC status (phones have no devtools)
   const speakLangRef = useRef(speakLang);
   const showLangRef = useRef(showLang);
@@ -226,13 +227,15 @@ function MeetingsPanel({ user, onSignOut, initialMeetingId }) {
     if (wrapper) wrapper.remove();
   }
   function showCaption(identity, text, lineId) {
-    const who = String(identity).split("@")[0];
+    const who = identity === user.email ? "You" : String(identity).split("@")[0];
     const id = lineId || Date.now() + Math.random();
     setCaptionLines((prev) =>
       prev.some((l) => l.id === id)
         ? prev.map((l) => (l.id === id ? { ...l, text } : l))
-        : [...prev.slice(-2), { id, who, text }]
+        : [...prev.slice(-1), { id, who, text }]
     );
+    clearTimeout(capHideTimerRef.current);
+    capHideTimerRef.current = setTimeout(() => setCaptionLines([]), 6000);
     const grid = gridRef.current;
     if (!grid) return;
     const wrapper = grid.querySelector(`[data-identity="${CSS.escape(identity)}"]`);
@@ -400,7 +403,8 @@ function MeetingsPanel({ user, onSignOut, initialMeetingId }) {
       }
       const unsub = onChildAdded(capQuery, (child) => {
         const msg = child.val();
-        if (!msg || msg.from === user.email) return;
+        if (!msg) return;
+        if (msg.from === user.email) { showCaption(msg.from, msg.text, child.key); return; } // own speech, untranslated (Zoom-style)
         console.log("[caption] rx", msg.from, msg.text);
         setCapStatus((s) => ({ ...s, rx: s.rx + 1 }));
         // Sept 24: show the original right away, then swap in the translation (8s cap), so a
@@ -1238,7 +1242,7 @@ function MeetingsPanel({ user, onSignOut, initialMeetingId }) {
           </div>
         )}
         {captionLines.length > 0 && (
-          <div className="mt-caption-strip" style={{ position: "fixed", left: 12, right: 12, bottom: 16, zIndex: 1000, maxWidth: 900, margin: "0 auto", padding: "10px 14px", background: "rgba(0,0,0,0.8)", color: "#fff", borderRadius: 10, fontSize: 16, lineHeight: 1.35, pointerEvents: "none", boxShadow: "0 4px 16px rgba(0,0,0,0.35)" }}>
+          <div className="mt-caption-strip" style={{ position: "fixed", left: 12, right: 12, bottom: 12, zIndex: 1000, maxWidth: 820, margin: "0 auto", padding: "6px 12px", background: "rgba(0,0,0,0.55)", color: "#fff", borderRadius: 8, fontSize: "clamp(13px, 3.6vw, 16px)", lineHeight: 1.3, textShadow: "0 1px 2px rgba(0,0,0,0.9)", pointerEvents: "none" }}>
             {captionLines.map((c) => (
               <div key={c.id}><strong>{c.who}:</strong> {c.text}</div>
             ))}
