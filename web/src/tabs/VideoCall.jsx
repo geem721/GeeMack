@@ -71,6 +71,9 @@ function VideoCallPanel({ user, onSignOut, initialRoom }) {
   const speakLangRef = useRef(speakLang);
   const showLangRef = useRef(showLang);
   const roomRef = useRef(room);
+  const [captionLines, setCaptionLines] = useState([]); // Sept 24: fixed bottom CC bar (ported from Meetings)
+  const [capStatus, setCapStatus] = useState({ listening: false, rx: 0 });
+  const capHideTimerRef = useRef(null);
   // isRecordingMine mirrored into a ref for the same reason speakLangRef/roomRef exist:
   // leaveCall() is captured once (in the mount-time cleanup effect below) and would
   // otherwise always see isRecordingMine's value from that first render, not whatever
@@ -192,7 +195,17 @@ function VideoCallPanel({ user, onSignOut, initialRoom }) {
     const wrapper = grid.querySelector(`[data-identity="${CSS.escape(identity)}"]`);
     if (wrapper) wrapper.remove();
   }
-  function showCaption(identity, text) {
+  function showCaption(identity, text, lineId) {
+    const who = identity === user.email ? "You" : String(identity).split("@")[0];
+    const id = lineId || Date.now() + Math.random();
+    setCaptionLines((prev) =>
+      prev.some((l) => l.id === id)
+        ? prev.map((l) => (l.id === id ? { ...l, text } : l))
+        : [...prev.slice(-1), { id, who, text }]
+    );
+    clearTimeout(capHideTimerRef.current);
+    capHideTimerRef.current = setTimeout(() => setCaptionLines([]), 6000);
+    if (identity === user.email) return; // own speech: bar only, no tile lookup
     const grid = gridRef.current;
     if (!grid) {
       console.warn("[caption] showCaption called but .vc-grid isn't mounted");
@@ -278,30 +291,37 @@ function VideoCallPanel({ user, onSignOut, initialRoom }) {
     }
   }
   function listenToCaptions(roomName) {
-    const captionsRef = ref(db, `chats/${roomName}/captions`);
-    const capQuery = query(captionsRef, limitToLast(1));
-    const handler = (snapshot) => {
-      console.log("[caption] listener fired for room", roomName, "exists:", snapshot.exists());
-      snapshot.forEach((child) => {
+    // Sept 24: ported from Meetings. Old limitToLast(1)+onValue dropped captions that arrived
+    // close together. Now: find newest existing key, then onChildAdded + startAfter(key) fires
+    // once per NEW caption. Original shows instantly; translation swaps in (8s cap).
+    setCaptionLines([]);
+    setCapStatus({ listening: false, rx: 0 });
+    import("firebase/database").then(async ({ orderByKey, startAfter, onChildAdded, get }) => {
+      const captionsRef = ref(db, `chats/${roomName}/captions`);
+      let capQuery = query(captionsRef, orderByKey());
+      try {
+        const snap = await get(query(captionsRef, limitToLast(1)));
+        snap.forEach((c) => { capQuery = query(captionsRef, orderByKey(), startAfter(c.key)); });
+      } catch (err) {
+        console.error("[caption] history lookup failed:", err);
+      }
+      const unsub = onChildAdded(capQuery, (child) => {
         const msg = child.val();
-        if (!msg || msg.from === user.email) {
-          console.log("[caption] skipping (own message or empty):", msg);
-          return;
-        }
-        console.log("[caption] incoming from", msg.from, ":", msg.text);
-        callTranslate(msg.text, "auto", showLangRef.current)
-          .then((res) => showCaption(msg.from, res.translation || msg.text))
-          .catch((err) => {
-            console.error("[caption] translate failed, showing raw text:", err);
-            showCaption(msg.from, msg.text);
-          });
-      });
-    };
-    // onValue's third argument is an error callback — without it, a Firebase permission
-    // error on this specific path (captions) would throw once into the void and never
-    // surface anywhere, indistinguishable from "nothing happened."
-    onValue(capQuery, handler, (err) => console.error("[caption] listener error (permissions?):", err));
-    captionOffRef.current = () => off(capQuery, "value", handler);
+        if (!msg) return;
+        if (msg.from === user.email) { showCaption(msg.from, msg.text, child.key); return; } // own speech, untranslated
+        console.log("[caption] rx", msg.from, msg.text);
+        setCapStatus((s) => ({ ...s, rx: s.rx + 1 }));
+        const lineId = child.key;
+        showCaption(msg.from, msg.text, lineId);
+        const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error("translate timeout")), 8000));
+        Promise.race([callTranslate(msg.text, "auto", showLangRef.current), timeout])
+          .then((res) => showCaption(msg.from, (res && res.translation) || msg.text, lineId))
+          .catch((err) => console.error("[caption] translate failed, keeping original:", err));
+      }, (err) => console.error("[caption] listener error (permissions?):", err));
+      captionOffRef.current = unsub;
+      setCapStatus((s) => ({ ...s, listening: true }));
+      console.log("[caption] listening on", roomName);
+    });
   }
   // Spoken-language WS is opened once per call with ?lang=... — a mid-call change needs
   // a reconnect for Deepgram to pick up the new language. Only restart the OUTGOING
@@ -667,6 +687,18 @@ function VideoCallPanel({ user, onSignOut, initialRoom }) {
           early-return guard silently no-opped. Local video never rendered, on any
           browser or device — this wasn't a mobile-specific bug (playsInline, fixed
           separately, was a real but secondary gap). */}
+      {callActive && (
+        <div className="mt-caption-status" style={{ fontSize: 12, color: "var(--muted)", margin: "4px 0" }}>
+          CC {capStatus.listening ? "listening" : "starting…"} · {capStatus.rx} received
+        </div>
+      )}
+      {captionLines.length > 0 && (
+        <div className="mt-caption-strip" style={{ position: "fixed", left: 12, right: 12, bottom: 12, zIndex: 1000, maxWidth: 820, margin: "0 auto", padding: "6px 12px", background: "rgba(0,0,0,0.55)", color: "#fff", borderRadius: 8, fontSize: "clamp(13px, 3.6vw, 16px)", lineHeight: 1.3, textShadow: "0 1px 2px rgba(0,0,0,0.9)", pointerEvents: "none" }}>
+          {captionLines.map((c) => (
+            <div key={c.id}><strong>{c.who}:</strong> {c.text}</div>
+          ))}
+        </div>
+      )}
       <div className="vc-grid" ref={gridRef} style={{ display: callActive ? "flex" : "none" }} />
       {!callActive && (
         <div className="vc-empty">Join a call to see video tiles and live translated captions here.</div>
