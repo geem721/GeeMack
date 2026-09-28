@@ -5,8 +5,12 @@
 // see the same drawing. Strokes sync on pen-up (one Firebase write per stroke).
 // Text labels are translated into each viewer's caption language (one callTranslate
 // per label per language, cached) -- the TalkBridge twist on a standard whiteboard.
+// Templates: users/{uid}/whiteboardTemplates/{id} = { name, createdAt, count } (listed live)
+// and users/{uid}/whiteboardTemplateItems/{id} = [items] (fetched only on load). Anyone can
+// save; only the host loads onto the shared board. Loaded items share a `batch` id so one
+// Undo removes the whole template.
 import { useEffect, useRef, useState } from "react";
-import { ref, onValue, push, remove, update } from "firebase/database";
+import { ref, onValue, push, remove, update, get } from "firebase/database";
 import { db } from "../firebase.js";
 import { callTranslate } from "../api/translate.js";
 import "./Whiteboard.css";
@@ -41,6 +45,23 @@ function wrapLines(ctx, text, maxW) {
   return lines;
 }
 const r4 = (n) => Math.round(n * 10000) / 10000;
+// Built-in starter templates (host loads them from 📋 Templates). Labels are English and get
+// translated per viewer like any other board text. Columns take optional y/h so SWOT can be 2x2.
+const col = (title, x, w, y = 0, h = 1) => ({ type: "column", x: r4(x), w: r4(w), y: r4(y), h: r4(h), title, lang: "en" });
+const starterNote = (text, x, y, color) => ({ type: "note", x: r4(x), y: r4(y), w: NOTE_W, h: NOTE_H, text, color, lang: "en" });
+const STARTERS = [
+  { key: "kanban", icon: "📋", name: "Kanban", items: KANBAN.map((t, i) => col(t, i / 3, 1 / 3)) },
+  { key: "retro", icon: "🔁", name: "Retro", items: ["Went well", "To improve", "Action items"].map((t, i) => col(t, i / 3, 1 / 3)) },
+  { key: "proscons", icon: "⚖️", name: "Pros / Cons", items: [col("Pros", 0, 0.5), col("Cons", 0.5, 0.5)] },
+  { key: "swot", icon: "🧭", name: "SWOT", items: [col("Strengths", 0, 0.5, 0, 0.5), col("Weaknesses", 0.5, 0.5, 0, 0.5), col("Opportunities", 0, 0.5, 0.5, 0.5), col("Threats", 0.5, 0.5, 0.5, 0.5)] },
+  { key: "brainstorm", icon: "💡", name: "Brainstorm", items: [
+    starterNote("Main topic", (1 - NOTE_W) / 2, (1 - NOTE_H) / 2, NOTE_COLORS[0]),
+    starterNote("Idea", 0.1, 0.1, NOTE_COLORS[2]), starterNote("Idea", 0.75, 0.1, NOTE_COLORS[2]),
+    starterNote("Idea", 0.1, 0.72, NOTE_COLORS[2]), starterNote("Idea", 0.75, 0.72, NOTE_COLORS[2]),
+  ] },
+];
+const MAX_TPL_ITEMS = 1500; // per saved template
+const MAX_TPLS = 30; // per user
 
 export default function Whiteboard({ meetingId, user, isHost, showLang, speakLang }) {
   const canvasRef = useRef(null);
@@ -62,6 +83,15 @@ export default function Whiteboard({ meetingId, user, isHost, showLang, speakLan
   const selectedRef = useRef(null);
   const dragRef = useRef(null); // { id, dx, dy, x, y, w, h } while dragging a note
   const itemsPath = `chats/${meetingId}/whiteboard/items`;
+  const tplRoot = `users/${user.uid}`;
+  const [showTemplates, setShowTemplates] = useState(false);
+  const [templates, setTemplates] = useState([]); // [{ id, name, createdAt, count }]
+  const [tplName, setTplName] = useState("");
+  const [tplMsg, setTplMsg] = useState("");
+  const [pendingLoad, setPendingLoad] = useState(null); // { name, items } awaiting Replace/Add
+  const [renamingId, setRenamingId] = useState(null);
+  const [renameDraft, setRenameDraft] = useState("");
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
 
   useEffect(() => {
     if (!meetingId) return undefined;
@@ -76,6 +106,20 @@ export default function Whiteboard({ meetingId, user, isHost, showLang, speakLan
     );
     return () => unsub();
   }, [meetingId]);
+
+  // Personal templates: metadata only here (small); board items are fetched on load.
+  useEffect(() => {
+    if (!user?.uid) return undefined;
+    const unsub = onValue(
+      ref(db, `users/${user.uid}/whiteboardTemplates`),
+      (snap) => {
+        const val = snap.val() || {};
+        setTemplates(Object.entries(val).map(([id, t]) => ({ id, ...t })).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)));
+      },
+      (err) => console.error("[whiteboard] templates listener error:", err),
+    );
+    return () => unsub();
+  }, [user?.uid]);
 
   useEffect(() => {
     items.forEach((it) => {
@@ -113,19 +157,21 @@ export default function Whiteboard({ meetingId, user, isHost, showLang, speakLan
       const label = translationsRef.current[`${it.id}|${showLangRef.current}`] || it.title;
       const x0 = it.x * w;
       const cw = (it.w || 1 / 3) * w;
+      const y0 = (it.y || 0) * h; // optional y/h (SWOT); Kanban columns are full height
+      const ch = (it.h || 1) * h;
       ctx.fillStyle = "#f1f5f9";
-      ctx.fillRect(x0 + 0.004 * w, 0.012 * h, cw - 0.008 * w, h - 0.024 * h);
+      ctx.fillRect(x0 + 0.004 * w, y0 + 0.012 * h, cw - 0.008 * w, ch - 0.024 * h);
       ctx.fillStyle = "#334155";
       ctx.font = `600 ${Math.max(11, 0.026 * w)}px system-ui, -apple-system, "Segoe UI", sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "top";
-      ctx.fillText(label, x0 + cw / 2, 0.03 * h);
+      ctx.fillText(label, x0 + cw / 2, y0 + 0.03 * h);
       ctx.textAlign = "left";
       ctx.strokeStyle = "#cbd5e1";
       ctx.lineWidth = Math.max(1, 0.002 * w);
       ctx.beginPath();
-      ctx.moveTo(x0 + 0.02 * w, 0.1 * h);
-      ctx.lineTo(x0 + cw - 0.02 * w, 0.1 * h);
+      ctx.moveTo(x0 + 0.02 * w, y0 + 0.1 * h);
+      ctx.lineTo(x0 + cw - 0.02 * w, y0 + 0.1 * h);
       ctx.stroke();
     } else if (it.type === "note") {
       const drag = dragRef.current;
@@ -291,16 +337,91 @@ export default function Whiteboard({ meetingId, user, isHost, showLang, speakLan
     remove(ref(db, `${itemsPath}/${selectedId}`)).catch((err) => console.error("[whiteboard] note delete failed:", err));
     setSelectedId(null);
   }
-  function addKanban() {
-    if (!isHost || items.some((it) => it.type === "column")) return;
-    KANBAN.forEach((title, i) => {
-      push(ref(db, itemsPath), { type: "column", x: r4(i / 3), w: r4(1 / 3), title, lang: "en", by: user.uid })
-        .catch((err) => console.error("[whiteboard] kanban save failed:", err));
-    });
-  }
   function undo() {
     const mine = [...items].reverse().find((it) => it.by === user.uid);
-    if (mine) remove(ref(db, `${itemsPath}/${mine.id}`)).catch((err) => console.error("[whiteboard] undo failed:", err));
+    if (!mine) return;
+    if (mine.batch) {
+      // A loaded template is one undo step: remove every item from that load.
+      const upd = {};
+      items.filter((it) => it.batch === mine.batch).forEach((it) => { upd[it.id] = null; });
+      update(ref(db, itemsPath), upd).catch((err) => console.error("[whiteboard] undo failed:", err));
+      return;
+    }
+    remove(ref(db, `${itemsPath}/${mine.id}`)).catch((err) => console.error("[whiteboard] undo failed:", err));
+  }
+  // ---- Templates ----
+  async function saveTemplate() {
+    const src = itemsRef.current;
+    if (!src.length) { setTplMsg("The board is empty. Draw or add something first."); return; }
+    if (src.length > MAX_TPL_ITEMS) { setTplMsg(`This board has ${src.length} items; templates are limited to ${MAX_TPL_ITEMS}.`); return; }
+    if (templates.length >= MAX_TPLS) { setTplMsg(`You have ${MAX_TPLS} templates (the limit). Delete one to save another.`); return; }
+    const name = tplName.trim().slice(0, 60) || `Board ${new Date().toLocaleDateString()}`;
+    const clean = src.map(({ id, by, batch, ...rest }) => rest);
+    const tid = push(ref(db, `${tplRoot}/whiteboardTemplates`)).key;
+    try {
+      await update(ref(db, tplRoot), {
+        [`whiteboardTemplateItems/${tid}`]: clean,
+        [`whiteboardTemplates/${tid}`]: { name, createdAt: Date.now(), count: clean.length },
+      });
+      setTplName("");
+      setTplMsg(`Saved “${name}” to My templates.`);
+    } catch (err) {
+      console.error("[whiteboard] template save failed:", err);
+      setTplMsg(`Couldn't save the template (${err.code || err.message}).`);
+    }
+  }
+  async function loadTemplate(tplItems, mode, name) {
+    if (!isHost) return;
+    const batch = push(ref(db, itemsPath)).key; // local id only, nothing written
+    const upd = {};
+    if (mode === "replace") itemsRef.current.forEach((it) => { upd[it.id] = null; });
+    tplItems.forEach((it) => { upd[push(ref(db, itemsPath)).key] = { ...it, by: user.uid, batch }; });
+    try {
+      await update(ref(db, itemsPath), upd); // one atomic write: clears (if replace) + adds
+      setShowTemplates(false);
+    } catch (err) {
+      console.error("[whiteboard] template load failed:", err);
+      setTplMsg(`Couldn't load “${name}” (${err.code || err.message}).`);
+    }
+  }
+  async function pickTemplate(t) {
+    if (!isHost) return;
+    setTplMsg("");
+    let tplItems = t.items;
+    if (!tplItems) {
+      try {
+        const snap = await get(ref(db, `${tplRoot}/whiteboardTemplateItems/${t.id}`));
+        tplItems = Object.values(snap.val() || {});
+      } catch (err) {
+        console.error("[whiteboard] template fetch failed:", err);
+        setTplMsg("Couldn't load that template.");
+        return;
+      }
+    }
+    if (!tplItems.length) { setTplMsg("That template is empty."); return; }
+    if (itemsRef.current.length === 0) { await loadTemplate(tplItems, "add", t.name); return; }
+    setPendingLoad({ name: t.name, items: tplItems });
+  }
+  async function confirmLoad(mode) {
+    const p = pendingLoad;
+    setPendingLoad(null);
+    if (p) await loadTemplate(p.items, mode, p.name);
+  }
+  function renameTemplate(tid) {
+    const name = renameDraft.trim().slice(0, 60);
+    setRenamingId(null);
+    if (!name) return;
+    update(ref(db, `${tplRoot}/whiteboardTemplates/${tid}`), { name }).catch((err) => console.error("[whiteboard] rename failed:", err));
+  }
+  function deleteTemplate(tid) {
+    if (confirmDeleteId !== tid) {
+      setConfirmDeleteId(tid);
+      setTimeout(() => setConfirmDeleteId((cur) => (cur === tid ? null : cur)), 3000);
+      return;
+    }
+    setConfirmDeleteId(null);
+    update(ref(db, tplRoot), { [`whiteboardTemplates/${tid}`]: null, [`whiteboardTemplateItems/${tid}`]: null })
+      .catch((err) => console.error("[whiteboard] template delete failed:", err));
   }
   function clearBoard() {
     if (!isHost) return;
@@ -353,9 +474,9 @@ export default function Whiteboard({ meetingId, user, isHost, showLang, speakLan
           {tool === "move" && selectedId && (
             <button type="button" className="wb-btn wb-btn-danger" onClick={deleteSelected}>🗑 Delete note</button>
           )}
-          {isHost && !items.some((it) => it.type === "column") && (
-            <button type="button" className="wb-btn" onClick={addKanban}>📋 Kanban</button>
-          )}
+          <button type="button" className={"wb-btn" + (showTemplates ? " wb-btn-active" : "")} onClick={() => { setShowTemplates((v) => !v); setTplMsg(""); setPendingLoad(null); }}>
+            📋 Templates
+          </button>
           <button type="button" className="wb-btn" onClick={undo}>↶ Undo</button>
           <button type="button" className="wb-btn" onClick={downloadPng}>⬇ PNG</button>
           {isHost && (
@@ -365,6 +486,60 @@ export default function Whiteboard({ meetingId, user, isHost, showLang, speakLan
           )}
         </div>
       </div>
+      {showTemplates && (
+        <div className="wb-tpl-panel">
+          <div className="wb-tpl-row">
+            <input className="gc-invite-input wb-tpl-name" placeholder="Name this board to save it as a template" maxLength={60} value={tplName} onChange={(e) => setTplName(e.target.value)} />
+            <button type="button" className="wb-btn" onClick={saveTemplate} disabled={!items.length}>💾 Save board as template</button>
+          </div>
+          {tplMsg && <div className="wb-tpl-msg">{tplMsg}</div>}
+          {pendingLoad && (
+            <div className="wb-tpl-confirm">
+              <span>Load “{pendingLoad.name}”? The board isn't empty:</span>
+              <button type="button" className="wb-btn wb-btn-danger" onClick={() => confirmLoad("replace")}>Replace board</button>
+              <button type="button" className="wb-btn" onClick={() => confirmLoad("add")}>Add on top</button>
+              <button type="button" className="wb-btn" onClick={() => setPendingLoad(null)}>Cancel</button>
+            </div>
+          )}
+          {isHost ? (
+            <div className="wb-tpl-section">
+              <div className="wb-tpl-heading">Starter templates</div>
+              <div className="wb-tpl-starters">
+                {STARTERS.map((s) => (
+                  <button key={s.key} type="button" className="wb-btn" onClick={() => pickTemplate({ name: s.name, items: s.items })}>{s.icon} {s.name}</button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="wb-tpl-msg">Only the host can load a template onto the board. You can still save this board to your own templates.</div>
+          )}
+          <div className="wb-tpl-section">
+            <div className="wb-tpl-heading">My templates</div>
+            {templates.length === 0 && <div className="wb-tpl-msg">No saved templates yet.</div>}
+            {templates.map((t) => (
+              <div key={t.id} className="wb-tpl-item">
+                {renamingId === t.id ? (
+                  <>
+                    <input className="gc-invite-input wb-tpl-name" maxLength={60} value={renameDraft} autoFocus
+                      onChange={(e) => setRenameDraft(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") renameTemplate(t.id); if (e.key === "Escape") setRenamingId(null); }} />
+                    <button type="button" className="wb-btn" onClick={() => renameTemplate(t.id)}>Save</button>
+                    <button type="button" className="wb-btn" onClick={() => setRenamingId(null)}>Cancel</button>
+                  </>
+                ) : (
+                  <>
+                    <span className="wb-tpl-title">{t.name}</span>
+                    <span className="wb-tpl-meta">{t.count || 0} items{t.createdAt ? ` · ${new Date(t.createdAt).toLocaleDateString()}` : ""}</span>
+                    {isHost && <button type="button" className="wb-btn" onClick={() => pickTemplate({ id: t.id, name: t.name })}>Load</button>}
+                    <button type="button" className="wb-btn" onClick={() => { setRenamingId(t.id); setRenameDraft(t.name || ""); }}>Rename</button>
+                    <button type="button" className="wb-btn wb-btn-danger" onClick={() => deleteTemplate(t.id)}>{confirmDeleteId === t.id ? "Tap again" : "Delete"}</button>
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       {(tool === "text" || tool === "note") && (
         <input
           className="gc-invite-input wb-text-input"
@@ -385,7 +560,7 @@ export default function Whiteboard({ meetingId, user, isHost, showLang, speakLan
         />
       </div>
       <div className="wb-hint">
-        Everyone can draw{isHost ? " · only you (host) can clear the board" : ""} · text is translated into each viewer's caption language
+        Everyone can draw{isHost ? " · only you (host) can load templates or clear the board" : ""} · 📋 Templates saves this board for reuse · text is translated into each viewer's caption language
       </div>
     </div>
   );

@@ -15,3 +15,15 @@
 .wb-canvas-text { cursor: text; }
 .wb-hint { font-size: 12px; color: var(--muted); }
 .wb-canvas-move { cursor: grab; }
+/* Templates panel */
+.wb-btn:disabled { opacity: 0.5; cursor: default; }
+.wb-tpl-panel { border: 1px solid var(--border); border-radius: 8px; background: var(--surface2); padding: 8px; display: flex; flex-direction: column; gap: 8px; }
+.wb-tpl-row, .wb-tpl-confirm, .wb-tpl-starters, .wb-tpl-item { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.wb-tpl-name { flex: 1 1 200px; min-width: 0; box-sizing: border-box; }
+.wb-tpl-confirm { padding: 6px 8px; border: 1px solid var(--accent); border-radius: 8px; font-size: 13px; }
+.wb-tpl-section { display: flex; flex-direction: column; gap: 6px; }
+.wb-tpl-heading { font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.wb-tpl-item { padding: 4px 0; border-top: 1px solid var(--border); }
+.wb-tpl-title { font-weight: 600; font-size: 14px; }
+.wb-tpl-meta { font-size: 12px; color: var(--muted); margin-right: auto; }
+.wb-tpl-msg { font-size: 12px; color: var(--muted); }
