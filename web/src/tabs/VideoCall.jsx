@@ -140,9 +140,9 @@ function VideoCallPanel({ user, onSignOut, initialRoom }) {
       clearInterval(staleCheck);
     };
   }, [callActive, room]);
-  function attachTrack(track, identity, isLocal) {
+  function ensureTile(identity) {
     const grid = gridRef.current;
-    if (!grid) return;
+    if (!grid) return null;
     let wrapper = grid.querySelector(`[data-identity="${CSS.escape(identity)}"]`);
     if (!wrapper) {
       wrapper = document.createElement("div");
@@ -154,6 +154,11 @@ function VideoCallPanel({ user, onSignOut, initialRoom }) {
       wrapper.appendChild(label);
       grid.appendChild(wrapper);
     }
+    return wrapper;
+  }
+  function attachTrack(track, identity, isLocal) {
+    const wrapper = ensureTile(identity);
+    if (!wrapper) return;
     if (track.kind === "video") {
       const el = track.attach();
       el.className = "vc-tile-video";
@@ -169,6 +174,8 @@ function VideoCallPanel({ user, onSignOut, initialRoom }) {
       el.setAttribute("playsinline", "true");
       el.autoplay = true;
       wrapper.insertBefore(el, wrapper.firstChild);
+      wrapper.querySelector(".vc-tile-placeholder")?.remove();
+      wrapper.classList.remove("vc-tile-connecting");
       // No explicit el.play() call here (unlike the audio branch below) — livekit-
       // client's track.attach() already starts playback internally once autoplay/
       // playsInline are set. Calling .play() again immediately after inserting the
@@ -194,6 +201,34 @@ function VideoCallPanel({ user, onSignOut, initialRoom }) {
     if (!grid) return;
     const wrapper = grid.querySelector(`[data-identity="${CSS.escape(identity)}"]`);
     if (wrapper) wrapper.remove();
+  }
+  // Placeholder tile for someone with no video yet: pulsing "Connecting…" at first, then
+  // "Camera off" if no video arrives within 10s (camera blocked/off, or audio-only).
+  function showPlaceholder(identity, status) {
+    const wrapper = ensureTile(identity);
+    if (!wrapper || wrapper.querySelector(".vc-tile-video")) return;
+    let ph = wrapper.querySelector(".vc-tile-placeholder");
+    if (!ph) {
+      ph = document.createElement("div");
+      ph.className = "vc-tile-placeholder";
+      const av = document.createElement("div");
+      av.className = "vc-tile-avatar";
+      av.textContent = (String(identity).trim()[0] || "?").toUpperCase();
+      const st = document.createElement("div");
+      st.className = "vc-tile-status";
+      ph.appendChild(av);
+      ph.appendChild(st);
+      wrapper.insertBefore(ph, wrapper.firstChild);
+    }
+    ph.querySelector(".vc-tile-status").textContent = status;
+    wrapper.classList.toggle("vc-tile-connecting", status === "Connecting…");
+  }
+  function showConnecting(identity) {
+    showPlaceholder(identity, "Connecting…");
+    setTimeout(() => {
+      const w = gridRef.current?.querySelector(`[data-identity="${CSS.escape(identity)}"]`);
+      if (w && !w.querySelector(".vc-tile-video")) showPlaceholder(identity, "Camera off");
+    }, 10000);
   }
   function showCaption(identity, text, lineId) {
     const who = identity === user.email ? "You" : String(identity).split("@")[0];
@@ -510,13 +545,20 @@ function VideoCallPanel({ user, onSignOut, initialRoom }) {
       livekitRoom.on(RoomEvent.TrackSubscribed, (track, _pub, participant) => {
         attachTrack(track, participant.identity, false);
       });
-      livekitRoom.on(RoomEvent.TrackUnsubscribed, (_track, _pub, participant) => {
-        removeTile(participant.identity);
+      livekitRoom.on(RoomEvent.TrackUnsubscribed, (track, _pub, participant) => {
+        // Camera/mic went away but the person is still here: keep the tile (and their audio),
+        // drop just that element and fall back to the placeholder. ParticipantDisconnected removes the tile.
+        track.detach().forEach((el) => el.remove());
+        if (track.kind === "video") showPlaceholder(participant.identity, "Camera off");
+      });
+      livekitRoom.on(RoomEvent.ParticipantConnected, (participant) => {
+        showConnecting(participant.identity);
       });
       livekitRoom.on(RoomEvent.ParticipantDisconnected, (participant) => {
         removeTile(participant.identity);
       });
       await livekitRoom.connect(url, token);
+      livekitRoom.remoteParticipants.forEach((p) => showConnecting(p.identity)); // tiles for people already here
       // Sept 24: camera/mic failures are non-fatal. A blocked camera used to throw here and the
       // catch disconnected the whole call ("Could not join"). Now each device is tried on its own,
       // whatever works gets published, and a toast says what's missing.
@@ -528,6 +570,7 @@ function VideoCallPanel({ user, onSignOut, initialRoom }) {
       if (videoTrack) await livekitRoom.localParticipant.publishTrack(videoTrack);
       if (audioTrack) await livekitRoom.localParticipant.publishTrack(audioTrack);
       if (videoTrack) attachTrack(videoTrack, "You (local)", true);
+      else showPlaceholder("You (local)", "Camera off");
       if (!videoTrack || !audioTrack) {
         const missing = !videoTrack && !audioTrack ? "camera and mic" : !videoTrack ? "camera" : "mic";
         showToast(`Joined without ${missing} — check your browser's site permissions`, 6000);

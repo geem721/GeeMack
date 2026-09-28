@@ -85,3 +85,10 @@
   font-weight: 700;
   text-align: center;
 }
+
+/* Placeholder tile: participant with no video yet (connecting) or camera off (same as Meetings.css) */
+.vc-tile-placeholder { width: 100%; aspect-ratio: 16 / 9; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; background: #1f2937; color: #e5e7eb; }
+.vc-tile-avatar { width: 56px; height: 56px; border-radius: 50%; background: var(--accent, #3a63f0); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 24px; font-weight: 600; }
+.vc-tile-status { font-size: 13px; opacity: 0.85; }
+.vc-tile-connecting .vc-tile-avatar { animation: vc-pulse 1.4s ease-in-out infinite; }
+@keyframes vc-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.55; transform: scale(0.92); } }
