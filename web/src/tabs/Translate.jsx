@@ -30,6 +30,8 @@ export default function Translate() {
 
   const lastTranslatedRef = useRef("");
   const debounceRef = useRef(null);
+  const doTranslateRef = useRef(null);
+  doTranslateRef.current = doTranslate; // mic onend uses current langs/settings, not the mic-start snapshot
   const recognitionRef = useRef(null);
 
   useEffect(
@@ -166,6 +168,8 @@ export default function Translate() {
       silenceTimer = setTimeout(() => { recognition._done = true; recognition.stop(); }, silenceMs);
     };
     recognition.onerror = (e) => {
+      // Edge/Chrome speech service drops long sessions with "network": let onend resume instead of stopping.
+      if (e.error === "network" && restarts < 20) return;
       recognition._done = true;
       showToast("Mic error: " + e.error);
       setIsRecording(false);
@@ -180,7 +184,7 @@ export default function Translate() {
       clearTimeout(silenceTimer);
       setSrcText((current) => {
         const trimmed = current.trim();
-        if (trimmed) doTranslate(trimmed);
+        if (trimmed) doTranslateRef.current(trimmed);
         return current;
       });
     };
