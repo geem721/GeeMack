@@ -35,7 +35,7 @@ export default function Translate() {
   useEffect(
     () => () => {
       clearTimeout(debounceRef.current);
-      recognitionRef.current?.stop();
+      if (recognitionRef.current) recognitionRef.current._done = true; recognitionRef.current?.stop();
     },
     [],
   );
@@ -140,7 +140,7 @@ export default function Translate() {
       return;
     }
     if (isRecording) {
-      recognitionRef.current?.stop();
+      if (recognitionRef.current) recognitionRef.current._done = true; recognitionRef.current?.stop();
       return;
     }
     const recognition = new SR();
@@ -151,7 +151,8 @@ export default function Translate() {
 
     let finalTranscript = "";
     let silenceTimer = null;
-    const silenceMs = extendedListen ? 3000 : 1500;
+    const silenceMs = extendedListen ? 5000 : 2500;
+    let restarts = 0;
 
     recognition.onresult = (e) => {
       let interim = "";
@@ -161,13 +162,19 @@ export default function Translate() {
       }
       setSrcText((finalTranscript + interim).trim());
       clearTimeout(silenceTimer);
-      silenceTimer = setTimeout(() => recognition.stop(), silenceMs);
+      silenceTimer = setTimeout(() => { recognition._done = true; recognition.stop(); }, silenceMs);
     };
     recognition.onerror = (e) => {
+      recognition._done = true;
       showToast("Mic error: " + e.error);
       setIsRecording(false);
     };
     recognition.onend = () => {
+      // Browser ended the session on its own (not silence/user/error): resume and keep appending.
+      if (!recognition._done && recognitionRef.current === recognition && restarts < 20) {
+        restarts++;
+        try { recognition.start(); return; } catch (err) { /* fall through to finish */ }
+      }
       setIsRecording(false);
       clearTimeout(silenceTimer);
       setSrcText((current) => {
