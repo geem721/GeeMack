@@ -237,8 +237,8 @@ app.post('/api/translate', async (req, res) => {
   const autoDetect = srcLang === 'auto';
 
   const systemPrompt = autoDetect
-    ? `You are a professional translator with auto language detection. Detect the source language of the given text and translate it to ${tgtName}. Call the provide_translation tool with the result.`
-    : `You are a professional translator. Translate the given text from ${srcName} to ${tgtName}. Call the provide_translation tool with the result.`;
+    ? `You are a professional translator with auto language detection. Detect the source language of the given text and translate it to ${tgtName}. The translation must contain ONLY the translated text: never add notes, explanations, disclaimers, or commentary, even if the input is fragmented, garbled, or has transcription errors. In that case, translate it as faithfully as possible without remarking on it. Call the provide_translation tool with the result.`
+    : `You are a professional translator. Translate the given text from ${srcName} to ${tgtName}. The translation must contain ONLY the translated text: never add notes, explanations, disclaimers, or commentary, even if the input is fragmented, garbled, or has transcription errors. In that case, translate it as faithfully as possible without remarking on it. Call the provide_translation tool with the result.`;
 
   // Structured output via tool-use, not hand-written JSON in free text. The earlier
   // version asked the model to "respond ONLY in this exact JSON format" as plain text,
@@ -1342,7 +1342,7 @@ const CALL_LANG_NAMES = {
 async function translateForCall(text, srcLang, tgtLang) {
   const srcName = CALL_LANG_NAMES[srcLang] || srcLang;
   const tgtName = CALL_LANG_NAMES[tgtLang] || tgtLang;
-  const systemPrompt = `You are a professional live interpreter on a phone call. Translate the given spoken text from ${srcName} to ${tgtName}. Keep it natural and conversational, not formal document style. Call the provide_translation tool with the result.`;
+  const systemPrompt = `You are a professional live interpreter on a phone call. Translate the given spoken text from ${srcName} to ${tgtName}. Keep it natural and conversational, not formal document style. The translation must contain ONLY the translated text: never add notes, explanations, disclaimers, or commentary, even if the input is fragmented, garbled, or has transcription errors. In that case, translate it as faithfully as possible without remarking on it. Call the provide_translation tool with the result.`;
   const TRANSLATE_TOOL = {
     name: 'provide_translation',
     description: 'Provide the translation result for the given text.',
