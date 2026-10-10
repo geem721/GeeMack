@@ -25,8 +25,8 @@ export default function Translate() {
   // Shared, persisted behavior settings — see useSettings.jsx / Settings.jsx. These
   // three used to live here as local, unpersisted state (Settings tab didn't exist yet);
   // now Settings.jsx is the only place that writes them, this just reads.
-  const { settings } = useSettings();
-  const { autoTranslate, saveHistory, extendedListen } = settings;
+  const { settings, updateSetting } = useSettings();
+  const { autoTranslate, saveHistory, extendedListen, autoPlay } = settings;
 
   const lastTranslatedRef = useRef("");
   const debounceRef = useRef(null);
@@ -52,6 +52,7 @@ export default function Translate() {
       const data = await callTranslate(text, srcLang, tgtLang);
       lastTranslatedRef.current = text;
       setResult(data);
+      if (autoPlay && data?.translation) handleSpeak(data.translation, tgtLang, languageLabel(tgtLang));
       if (saveHistory) {
         addEntry({
           srcLang: data.detected || srcLang,
@@ -272,6 +273,14 @@ export default function Translate() {
           <button className="btn btn-secondary" onClick={speakResult}>
             🔊 Listen
           </button>
+          <label className="settings-checkbox" title="Automatically play each translation aloud">
+            <input
+              type="checkbox"
+              checked={!!autoPlay}
+              onChange={(e) => updateSetting("autoPlay", e.target.checked)}
+            />
+            Auto-play
+          </label>
           <button className="btn btn-secondary" onClick={openFullScreen}>
             ⛶ Full Screen
           </button>

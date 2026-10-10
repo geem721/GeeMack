@@ -74,7 +74,7 @@ export default function Settings() {
             checked={settings.extendedListen}
             onChange={(e) => updateSetting("extendedListen", e.target.checked)}
           />
-          Extended listening mode (3s pause before mic stops)
+          Extended listening mode (5s pause before mic stops)
         </label>
       </div>
       <div className="settings-footer">

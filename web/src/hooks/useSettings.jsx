@@ -18,6 +18,7 @@ const DEFAULTS = {
   extendedListen: true,
   useBackCamera: true,
   autoCapture: false,
+  autoPlay: false,
 };
 function readSettings() {
   try {
