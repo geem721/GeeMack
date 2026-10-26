@@ -33,11 +33,13 @@ export default function Translate() {
   const doTranslateRef = useRef(null);
   doTranslateRef.current = doTranslate; // mic onend uses current langs/settings, not the mic-start snapshot
   const recognitionRef = useRef(null);
+  const dgMicRef = useRef(null); // Auto-Detect mic session: streams to /ws/transcribe?lang=auto (Deepgram multi)
 
   useEffect(
     () => () => {
       clearTimeout(debounceRef.current);
       if (recognitionRef.current) recognitionRef.current._done = true; recognitionRef.current?.stop();
+      stopDgMic(false);
     },
     [],
   );
@@ -136,7 +138,114 @@ export default function Translate() {
     setFullScreenOpen(true);
   }
 
+  // Auto-Detect source: browser SpeechRecognition needs one fixed language (falls back to en-US and
+  // mangles e.g. Spanish), so in Auto mode stream the mic to /ws/transcribe?lang=auto (Deepgram nova-3 multi).
+  function startDgMic() {
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+      showToast("Microphone not supported in this browser");
+      return;
+    }
+    const silenceMs = extendedListen ? 5000 : 2500;
+    const session = { ws: null, recorder: null, stream: null, silenceTimer: null, text: "", finishing: false,
+      sendChain: Promise.resolve(), finish: null, finishTimer: null };
+    dgMicRef.current = session;
+    setIsRecording(true);
+    const armSilence = (ms) => {
+      clearTimeout(session.silenceTimer);
+      session.silenceTimer = setTimeout(() => stopDgMic(true), ms);
+    };
+    navigator.mediaDevices
+      .getUserMedia({ audio: true })
+      .then((stream) => {
+        if (dgMicRef.current !== session || session.finishing) { stream.getTracks().forEach((t) => t.stop()); return; }
+        session.stream = stream;
+        const wsProtocol = location.protocol === "https:" ? "wss:" : "ws:";
+        const ws = new WebSocket(`${wsProtocol}//${location.host}/ws/transcribe?lang=auto&interim=1`);
+        session.ws = ws;
+        ws.onopen = () => {
+          if (session.finishing) return;
+          const recorder = new MediaRecorder(stream, { mimeType: "audio/webm;codecs=opus" });
+          session.recorder = recorder;
+          recorder.ondataavailable = (e) => {
+            if (e.data.size === 0) return;
+            session.sendChain = session.sendChain
+              .then(() => e.data.arrayBuffer())
+              .then((buf) => { if (ws.readyState === WebSocket.OPEN) ws.send(buf); })
+              .catch(() => {});
+          };
+          recorder.start(250);
+          armSilence(silenceMs + 10000); // extra time to start talking
+          showToast(extendedListen ? "Listening (auto-detect, extended)…" : "Listening (auto-detect)…", 3000);
+        };
+        ws.onmessage = (event) => {
+          let data;
+          try { data = JSON.parse(event.data); } catch (e) { return; }
+          if (data.type === "interim" && data.text) {
+            // Partial words: show live and reset the silence timer so mid-sentence speech isn't cut off.
+            setSrcText((session.text + data.text).trim());
+            if (!session.finishing) armSilence(silenceMs);
+            return;
+          }
+          // Deepgram can split the flush into 2 results: wait a beat so a trailing word isn't dropped.
+          if (data.type === "finalized") { setTimeout(() => session.finish?.(), 500); return; }
+          if (data.type === "transcript" && data.text) {
+            session.text += data.text + " ";
+            setSrcText(session.text.trim());
+            if (!session.finishing) armSilence(silenceMs);
+          }
+        };
+        ws.onerror = () => { if (!session.finishing) { showToast("Mic error: connection"); stopDgMic(true); } };
+        ws.onclose = () => {
+          if (session.finishing) session.finish?.();
+          else if (dgMicRef.current === session) stopDgMic(true);
+        };
+      })
+      .catch((err) => {
+        showToast("Mic error: " + (err?.name || "permission denied"));
+        if (dgMicRef.current === session) { dgMicRef.current = null; setIsRecording(false); }
+      });
+  }
+
+  function stopDgMic(translate) {
+    const session = dgMicRef.current;
+    if (!session || session.finishing) return;
+    session.finishing = true;
+    clearTimeout(session.silenceTimer);
+    setIsRecording(false);
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(session.finishTimer);
+      try { session.ws?.close(); } catch (e) { /* ignore */ }
+      session.stream?.getTracks().forEach((t) => t.stop());
+      if (dgMicRef.current === session) dgMicRef.current = null;
+      const text = session.text.trim();
+      if (translate && text) doTranslateRef.current(text);
+    };
+    session.finish = finish;
+    const ws = session.ws;
+    const rec = session.recorder;
+    if (!translate || !rec || rec.state === "inactive" || !ws || ws.readyState !== WebSocket.OPEN) {
+      try { if (rec && rec.state !== "inactive") rec.stop(); } catch (e) { /* ignore */ }
+      finish();
+      return;
+    }
+    // Stop the recorder (emits its last chunk), send that chunk, then ask the server to Finalize
+    // Deepgram so the trailing phrase comes back before we close. 4s safety net.
+    rec.onstop = () => {
+      session.stream?.getTracks().forEach((t) => t.stop());
+      session.sendChain.then(() => {
+        if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "finalize" }));
+      });
+    };
+    try { rec.stop(); } catch (e) { finish(); return; }
+    session.finishTimer = setTimeout(finish, 4000);
+  }
+
   function toggleMic() {
+    if (isRecording && dgMicRef.current) { stopDgMic(true); return; }
+    if (!isRecording && srcLang === "auto") { startDgMic(); return; }
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) {
       showToast("Speech recognition not supported");

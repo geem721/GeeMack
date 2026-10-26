@@ -1826,6 +1826,7 @@ captionWss.on('connection', (ws, req) => {
 wss.on('connection', (ws, req) => {
   const { searchParams } = new URL(req.url, `http://${req.headers.host}`);
   const lang = toDeepgramLang(searchParams.get('lang'));
+  const wantInterim = searchParams.get('interim') === '1'; // Translate tab: live text + silence detection
 
   const connId = Math.random().toString(36).slice(2, 8);
   let bytesReceived = 0;
@@ -1843,6 +1844,7 @@ wss.on('connection', (ws, req) => {
   let reconnects = 0;
   let emptyFrames = 0;
   let dgConnection = null;
+  let finalizeRequested = false; // Translate tab asks for a flush on stop so the last phrase isn't lost
 
   function openDeepgram() {
     const attemptTime = Date.now();
@@ -1851,7 +1853,7 @@ wss.on('connection', (ws, req) => {
       model: 'nova-3',
       language: lang,
       smart_format: true,
-      interim_results: false,
+      interim_results: wantInterim,
       encoding: 'opus',
       container: 'webm'
     });
@@ -1873,11 +1875,18 @@ wss.on('connection', (ws, req) => {
 
     conn.on(LiveTranscriptionEvents.Transcript, (data) => {
       const transcript = data?.channel?.alternatives?.[0]?.transcript;
-      console.log(`[transcribe][${connId}] transcript event, final=${data.is_final}, text="${transcript}"`);
+      if (data.is_final) console.log(`[transcribe][${connId}] transcript event, final=${data.is_final}, text="${transcript}"`);
+      if (wantInterim && transcript && transcript.trim() && !data.is_final && ws.readyState === ws.OPEN) {
+        ws.send(JSON.stringify({ type: 'interim', text: transcript.trim() }));
+      }
       if (transcript && transcript.trim() && data.is_final) {
         if (ws.readyState === ws.OPEN) {
           ws.send(JSON.stringify({ type: 'transcript', text: transcript.trim() }));
         }
+      }
+      if (data.from_finalize && finalizeRequested && ws.readyState === ws.OPEN) {
+        console.log(`[transcribe][${connId}] finalize flush complete`);
+        ws.send(JSON.stringify({ type: 'finalized' }));
       }
     });
 
@@ -1907,7 +1916,25 @@ wss.on('connection', (ws, req) => {
     } catch (e) { /* ignore */ }
   }, 5000);
 
-  ws.on('message', (data) => {
+  ws.on('message', (data, isBinary) => {
+    // Text frames are control messages; audio from every client is binary.
+    if (isBinary === false) {
+      let msg = null;
+      try { msg = JSON.parse(data.toString()); } catch (e) { /* ignore */ }
+      if (msg && msg.type === 'finalize') {
+        finalizeRequested = true;
+        console.log(`[transcribe][${connId}] client requested finalize`);
+        try {
+          if (dgConnection && dgConnection.getReadyState() === 1) {
+            if (typeof dgConnection.finalize === 'function') dgConnection.finalize();
+            else dgConnection.send(JSON.stringify({ type: 'Finalize' }));
+          } else if (ws.readyState === ws.OPEN) {
+            ws.send(JSON.stringify({ type: 'finalized' }));
+          }
+        } catch (e) { /* client has a 4s fallback */ }
+      }
+      return;
+    }
     const len = data.length || data.byteLength || 0;
     if (len === 0) {
       emptyFrames += 1;
